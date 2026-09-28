@@ -20,7 +20,7 @@
     "@tavi/env": "workspace:*",
     "@react-email/components": "^1.0.12",
     "@react-email/render": "^2.1.0",
-    "@types/node": "^22.15.3",
+    "@types/node": "^26.6.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "resend": "^6.28.1"
