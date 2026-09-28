@@ -40,7 +40,7 @@
     "oxlint": "1.85.0",
     "semantic-release": "^25.0.9",
     "turbo": "^2.10.8",
-    "typescript": "~5.9.3",
+    "typescript": "~6.0.3",
     "vite": "^8.2.0"
   },
   "engines": {

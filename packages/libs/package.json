@@ -15,7 +15,7 @@
     "@orpc/server": "2.0.0-beta.40",
     "@tavi/api": "workspace:*",
     "@tavi/typescript-config": "workspace:*",
-    "typescript": "~5.9.3",
+    "typescript": "~6.0.3",
     "vitest": "^4.1.11"
   },
   "dependencies": {
