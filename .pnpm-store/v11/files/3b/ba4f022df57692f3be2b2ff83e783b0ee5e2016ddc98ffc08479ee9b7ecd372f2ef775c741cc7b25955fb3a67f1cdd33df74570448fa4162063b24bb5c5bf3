@@ -1,0 +1,21 @@
+import { Fragment, jsx } from "preact/jsx-runtime";
+//#region src/preact/plugin.tsx
+function createPreactPlugin({ Component, ...config }) {
+	function Plugin() {
+		return {
+			...config,
+			render: (_el, props) => /* @__PURE__ */ jsx(Component, { ...props })
+		};
+	}
+	function NoOpPlugin() {
+		return {
+			...config,
+			render: (_el, _props) => /* @__PURE__ */ jsx(Fragment, {})
+		};
+	}
+	return [Plugin, NoOpPlugin];
+}
+//#endregion
+export { createPreactPlugin };
+
+//# sourceMappingURL=plugin.js.map

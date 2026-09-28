@@ -1,0 +1,8 @@
+export declare const A11yDevtools: (props: import('@tanstack/devtools-utils/solid').DevtoolsPanelProps) => import("solid-js").JSX.Element;
+export declare const a11yDevtoolsPlugin: () => {
+    render: (_el: HTMLElement, props: import('@tanstack/devtools').TanStackDevtoolsPluginProps) => import("solid-js").JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+};
+export type { A11yDevtoolsSolidInit } from './A11yDevtools.js';

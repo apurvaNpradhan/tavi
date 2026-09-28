@@ -1,0 +1,38 @@
+{
+  "name": "@tavi/email",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --emitDeclarationOnly && esbuild src/index.tsx --bundle --platform=node --format=esm --packages=external --outdir=dist",
+    "dev": "email dev --port 3002 --dir src/templates",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@tavi/env": "workspace:*",
+    "@react-email/components": "^1.0.12",
+    "@react-email/render": "^2.1.0",
+    "@types/node": "^22.15.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "resend": "^6.28.1"
+  },
+  "devDependencies": {
+    "@tavi/typescript-config": "workspace:*",
+    "@react-email/ui": "6.11.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "esbuild": "0.28.1",
+    "react-email": "^6.9.2",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

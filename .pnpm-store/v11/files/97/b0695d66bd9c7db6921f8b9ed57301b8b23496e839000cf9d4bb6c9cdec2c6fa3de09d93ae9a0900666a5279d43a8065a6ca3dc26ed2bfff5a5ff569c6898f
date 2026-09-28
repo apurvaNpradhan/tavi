@@ -1,0 +1,42 @@
+import { MaybeOptionalOptions } from '@orpc/shared';
+import { SendStandardResponseOptions, AnyFastifyRequest, AnyFastifyReply } from '@standard-server/fastify';
+import { Context } from '../../index.js';
+import { StandardHandler, StandardHandlerOptions } from '../standard/index.js';
+import { FriendlyStandardHandlerHandleOptions } from '../standard/index.js';
+import { Router } from '../../index.js';
+import { RPCHandlerCodecOptions } from '../standard/index.js';
+import '@orpc/client';
+import '@orpc/contract';
+import '@standard-server/core';
+
+type FastifyHandlerHandleResult = {
+    matched: true;
+} | {
+    matched: false;
+};
+interface FastifyHandlerOptions<_T extends Context> {
+    /**
+     * Custom options for `sendStandardResponse`, used to send a `Standard Response`
+     */
+    sendStandardResponse?: SendStandardResponseOptions | undefined;
+}
+declare class FastifyHandler<T extends Context> {
+    private readonly standardHandler;
+    private readonly sendStandardResponseOptions;
+    constructor(standardHandler: StandardHandler<T>, options?: NoInfer<FastifyHandlerOptions<T>>);
+    handle(request: AnyFastifyRequest, reply: AnyFastifyReply, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): Promise<FastifyHandlerHandleResult>;
+}
+
+interface RPCHandlerOptions<T extends Context> extends FastifyHandlerOptions<T>, StandardHandlerOptions<T>, RPCHandlerCodecOptions<T> {
+}
+/**
+ * Serves an oRPC router over the RPC protocol inside a Fastify server.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/fastify | Fastify Adapter}
+ */
+declare class RPCHandler<T extends Context> extends FastifyHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<RPCHandlerOptions<T>>);
+}
+
+export { FastifyHandler, RPCHandler };
+export type { FastifyHandlerHandleResult, FastifyHandlerOptions, RPCHandlerOptions };

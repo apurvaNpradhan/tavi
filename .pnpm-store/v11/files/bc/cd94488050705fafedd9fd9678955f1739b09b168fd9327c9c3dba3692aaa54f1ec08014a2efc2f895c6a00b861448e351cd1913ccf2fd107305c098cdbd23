@@ -1,0 +1,17 @@
+import { A11yPluginOptions } from '../types/types.js';
+/**
+ * Default plugin configuration
+ */
+export declare const DEFAULT_CONFIG: Required<A11yPluginOptions>;
+/**
+ * Load configuration from localStorage
+ */
+export declare function loadConfig(): Required<A11yPluginOptions>;
+/**
+ * Save configuration to localStorage
+ */
+export declare function saveConfig(config: Partial<A11yPluginOptions>): void;
+/**
+ * Merge user options with defaults
+ */
+export declare function mergeConfig(options?: A11yPluginOptions): Required<A11yPluginOptions>;

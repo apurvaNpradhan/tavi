@@ -1,0 +1,491 @@
+import { ErrorMap, MergedErrorMap, AnySchema, MetaPlugin, InferSchemaOutput, InferSchemaInput, AugmentContractRouterOptions, RouterContract, AnyProcedureContract, InitialInputSchema, InitialOutputSchema, MergedSchema, ORPCErrorConstructorMap, Schema, ProcedureContractDefinition, ProcedureContract, InferRouterContractErrorMap, ORPCErrorFromErrorMap } from '@orpc/contract';
+export { AnyMetaPlugin, AnySchema, ErrorMap, ErrorMapItem, InferSchemaInput, InferSchemaOutput, InitialInputSchema, InitialOutputSchema, MergedErrorMap, Meta, MetaPlugin, MetaPluginDefinition, ORPCErrorConstructorMap, ORPCErrorConstructorMapItem, ORPCErrorConstructorMapItemOptions, ORPCErrorFactory, ORPCErrorFactoryOptions, ORPCErrorFromErrorMap, ProcedureContract, ProcedureContractDefinition, RouterContract, Schema, ValidationError, asyncIteratorObject, defineMeta, error, eventIterator, reconcileORPCError, type } from '@orpc/contract';
+import { IntersectPick, Promisable, Public, PromiseWithError, ThrowableError, MaybeOptionalOptions } from '@orpc/shared';
+export { AsyncCleanupFn, AsyncIteratorClass, AsyncIteratorClassNextFn, MaybeOptionalOptions, PromiseWithError, Registry, ThrowableError, asyncIteratorToStream, asyncIteratorToUnproxiedDataStream, asyncIteratorToStream as eventIteratorToStream, asyncIteratorToUnproxiedDataStream as eventIteratorToUnproxiedDataStream, onAsyncIteratorObjectError, onError, onFinish, onReadableStreamError, onStart, onSuccess, streamToAsyncIteratorObject, streamToAsyncIteratorObject as streamToEventIterator } from '@orpc/shared';
+import { C as Context, d as Middleware, M as MergedContext, e as MergedInitialContext, a as Procedure, f as ProcedureConfig, g as AnyMiddleware, h as Lazy, A as AnyProcedure, L as Lazyable, i as ProcedureHandler, O as OrderedMiddleware, P as ProcedureClientOptions, b as ProcedureClient } from './shared/server.BsujoJoF.mjs';
+export { j as LazyDefinition, k as MiddlewareDefinition, l as MiddlewareDone, m as MiddlewareDoneOptions, n as MiddlewareNext, o as MiddlewareNextOptions, p as MiddlewareOptions, q as MiddlewareResult, c as ProcedureClientInterceptor, r as ProcedureClientInterceptorOptions, s as ProcedureDefinition, t as ProcedureHandlerOptions, u as createProcedureClient, v as unlazy } from './shared/server.BsujoJoF.mjs';
+import { A as AnyRouter, R as Router, C as ContractedRouter, I as InferRouterInitialContext } from './shared/server.BpmUhems.mjs';
+export { a as InferRouterCurrentContexts, b as InferRouterError, c as InferRouterErrors, a as InferRouterFinalContexts, d as InferRouterInitialContexts, e as InferRouterInputs, f as InferRouterOutputs } from './shared/server.BpmUhems.mjs';
+import { ClientOptions, ClientContext } from '@orpc/client';
+export { AnyORPCError, AnyORPCErrorJSON, COMMON_ERROR_STATUS_MAP, Client, ClientContext, ClientOptions, ClientRest, FriendlyClientOptions, ORPCError, ORPCErrorCode, ORPCErrorJSON, ORPCErrorOptions, RPCJsonSerialization, RPCJsonSerializationMeta, RPCJsonSerializer, RPCJsonSerializerHandler, RPCJsonSerializerOptions, RPCSerializer, RPCSerializerOptions, RPCSerializerSerializeOptions, SafeResult, cloneORPCError, isDefinedError, safe, toORPCError } from '@orpc/client';
+export { ErrorEvent, EventMeta, StandardBody, StandardBodyHint, StandardHeaders, StandardLazyRequest, StandardLazyResponse, StandardMethod, StandardRequest, StandardResponse, StandardUrl, getEventMeta, unwrapEvent, withEventMeta } from '@standard-server/core';
+
+interface DecoratedMiddleware<TInContext extends Context, TOutContext extends Context, TInput, TOutput, TErrorMap extends ErrorMap> extends Middleware<TInContext, TOutContext, TInput, TOutput, TErrorMap> {
+    adaptInput<T>(adapt: (input: T) => TInput): DecoratedMiddleware<TInContext, TOutContext, T, TOutput, TErrorMap>;
+    errors<T extends ErrorMap>(errors: T): DecoratedMiddleware<TInContext, TOutContext, TInput, TOutput, MergedErrorMap<TErrorMap, T>>;
+    use<$OutContext extends IntersectPick<MergedContext<TInContext, TOutContext>, $OutContext>, $Input extends TInput, $InContext extends Context = MergedContext<TInContext, TOutContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInContext, TOutContext>, $OutContext, $Input, TOutput, $ErrorMap>): DecoratedMiddleware<MergedInitialContext<TInContext, TOutContext, $InContext>, MergedContext<TOutContext, $OutContext>, $Input, TOutput, MergedErrorMap<$ErrorMap, TErrorMap>>;
+}
+declare function decorateMiddleware<TInContext extends Context, TOutContext extends Context, TInput, TOutput, TErrorMap extends ErrorMap>(middleware: Middleware<TInContext, TOutContext, TInput, TOutput, TErrorMap>): DecoratedMiddleware<TInContext, TOutContext, TInput, TOutput, TErrorMap>;
+
+declare class DecoratedProcedure<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> extends Procedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap> {
+    meta(...plugins: MetaPlugin<TInputSchema, TOutputSchema, TErrorMap>[]): DecoratedProcedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap>;
+    errors<T extends ErrorMap>(errors: T): DecoratedProcedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, MergedErrorMap<TErrorMap, T>>;
+    use<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>, $ErrorMap>): DecoratedProcedure<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, TInputSchema, TOutputSchema, MergedErrorMap<$ErrorMap, TErrorMap>>;
+}
+
+type AugmentedRouter<T extends AnyRouter, TErrorMap extends ErrorMap> = T extends Procedure<infer $InitialContext, infer $CurrentContext, infer $InputSchema, infer $OutputSchema, infer $ErrorMap> ? Procedure<$InitialContext, $CurrentContext, $InputSchema, $OutputSchema, MergedErrorMap<TErrorMap, $ErrorMap>> : {
+    [K in keyof T]: T[K] extends Lazy<infer $ extends AnyRouter> ? Lazy<AugmentedRouter<$, TErrorMap>> : T[K] extends AnyRouter ? AugmentedRouter<T[K], TErrorMap> : never;
+};
+type AugmentedRouterWithMiddlewares<T extends AnyRouter, TInitialContext extends Context, TInjectedContext extends Context, TErrorMap extends ErrorMap> = T extends Procedure<infer $InitialContext, infer $CurrentContext, infer $InputSchema, infer $OutputSchema, infer $ErrorMap> ? Procedure<MergedInitialContext<TInitialContext, TInjectedContext, $InitialContext>, $CurrentContext, $InputSchema, $OutputSchema, MergedErrorMap<TErrorMap, $ErrorMap>> : {
+    [K in keyof T]: T[K] extends Lazy<infer $ extends AnyRouter> ? Lazy<AugmentedRouterWithMiddlewares<$, TInitialContext, TInjectedContext, TErrorMap>> : T[K] extends AnyRouter ? AugmentedRouterWithMiddlewares<T[K], TInitialContext, TInjectedContext, TErrorMap> : never;
+};
+interface AugmentRouterOptions<TErrorMap extends ErrorMap> extends AugmentContractRouterOptions<TErrorMap>, ProcedureConfig {
+    middlewares: AnyMiddleware[];
+}
+declare function augmentRouter<T extends AnyRouter, TInitialContext extends Context, TCurrentContext extends Context, TErrorMap extends ErrorMap>(router: T, options: AugmentRouterOptions<TErrorMap>): AugmentedRouter<T, TErrorMap> | AugmentedRouterWithMiddlewares<T, TInitialContext, TCurrentContext, TErrorMap>;
+interface AugmentImplementedRouterOptions extends ProcedureConfig {
+    middlewares: AnyMiddleware[];
+}
+declare function augmentImplementedRouter<T extends AnyRouter, TInitialContext extends Context, TCurrentContext extends Context>(router: T, options: AugmentImplementedRouterOptions): AugmentedRouter<T, object> | AugmentedRouterWithMiddlewares<T, TInitialContext, TCurrentContext, object>;
+declare function getRouter<T extends Lazyable<AnyRouter | undefined>>(router: T, path: readonly string[]): T extends Lazy<any> ? Lazy<AnyRouter | undefined> : Lazyable<AnyRouter | undefined>;
+interface WalkProcedureContractsLazyResult {
+    router: Lazy<AnyRouter>;
+    path: string[];
+}
+declare function walkProcedureContractsSync(router: RouterContract | AnyRouter, callback: (contract: AnyProcedureContract | AnyProcedure, path: string[]) => void, path?: string[]): WalkProcedureContractsLazyResult[];
+declare function walkProcedureContractsAsync(router: RouterContract | AnyRouter, callback: (contract: AnyProcedureContract | AnyProcedure, path: string[]) => Promisable<void>, path?: string[]): Promise<void>;
+type UnlaziedRouter<T extends AnyRouter> = T extends AnyProcedure ? T : {
+    [K in keyof T]: T[K] extends Lazyable<infer U extends AnyRouter> ? UnlaziedRouter<U> : never;
+};
+/**
+ * Fully resolves all lazy routers inside a router, returning a plain router.
+ * Useful for making a router with lazy parts contract-compatible.
+ *
+ * @see {@link https://orpc.dev/docs/contract/router#router-to-contract | Router Contract - Router to Contract}
+ */
+declare function unlazyRouter<T extends AnyRouter>(router: T): Promise<UnlaziedRouter<T>>;
+
+/**
+ * The builder variant returned after `.use` is called.
+ * `.$context` and `.$config` are no longer available once middleware is applied.
+ *
+ * @see {@link https://orpc.dev/docs/procedure | Procedure}
+ */
+interface BuilderWithMiddlewares<TInitialContext extends Context, TInjectedContext extends Context, TErrorMap extends ErrorMap> {
+    '~orpc': BuilderDefinition<InitialInputSchema, InitialOutputSchema, TErrorMap>;
+    /**
+     * Applies metadata plugins to procedures built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/metadata | Metadata}
+     */
+    'meta'(...plugins: MetaPlugin<InitialInputSchema, InitialOutputSchema, TErrorMap>[]): BuilderWithMiddlewares<TInitialContext, TInjectedContext, TErrorMap>;
+    /**
+     * Defines typesafe errors that procedures built from this builder can throw
+     * via the `errors` utility in handlers and middleware.
+     *
+     * @see {@link https://orpc.dev/docs/error-handling#typesafe-errors | Error Handling - Typesafe Errors}
+     */
+    'errors'<T extends ErrorMap>(errors: T): BuilderWithMiddlewares<TInitialContext, TInjectedContext, MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Applies a middleware that runs before the handler of every procedure
+     * built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/middleware | Middleware}
+     */
+    'use'<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, InferSchemaOutput<InitialInputSchema>, InferSchemaInput<InitialOutputSchema>, $ErrorMap>): BuilderWithMiddlewares<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, MergedErrorMap<$ErrorMap, TErrorMap>>;
+    /**
+     * Creates a standalone middleware that can be composed and applied to any
+     * compatible builder or procedure with `.use`.
+     *
+     * @see {@link https://orpc.dev/docs/middleware | Middleware}
+     */
+    'middleware'<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $Input, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $Output = any>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, $Input, $Output, TErrorMap>): DecoratedMiddleware<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, $Input, $Output, TErrorMap>;
+    /**
+     * Defines the input schema used to validate and type the procedure input.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+     */
+    'input'<T extends AnySchema>(schema: T): BuilderWithInput<TInitialContext, TInjectedContext, T, TErrorMap>;
+    /**
+     * Defines the output schema used to validate and type the procedure output.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+     */
+    'output'<T extends AnySchema>(schema: T): BuilderWithOutput<TInitialContext, TInjectedContext, T, TErrorMap>;
+    /**
+     * Defines the function that implements the procedure and completes the
+     * chain, returning a callable procedure.
+     *
+     * @see {@link https://orpc.dev/docs/procedure | Procedure}
+     */
+    'handler'<T>(handler: ProcedureHandler<MergedContext<TInitialContext, TInjectedContext>, InferSchemaOutput<InitialInputSchema>, T, ORPCErrorConstructorMap<TErrorMap>>): DecoratedProcedure<TInitialContext, TInjectedContext, InitialInputSchema, Schema<T>, TErrorMap>;
+    /**
+     * Applies the builder's middleware, errors, and metadata to every procedure
+     * in the given router.
+     *
+     * @see {@link https://orpc.dev/docs/router#extending-router | Router - Extending Router}
+     */
+    'router'<T extends Router<MergedContext<TInitialContext, TInjectedContext>>>(router: T): AugmentedRouterWithMiddlewares<T, TInitialContext, TInjectedContext, TErrorMap>;
+    /**
+     * Like `.router`, but loads the router lazily on first access, which helps
+     * reduce startup time for large applications.
+     *
+     * @see {@link https://orpc.dev/docs/router#lazy-router | Router - Lazy Router}
+     */
+    'lazy'<T extends Router<MergedContext<TInitialContext, TInjectedContext>>>(loader: () => Promise<{
+        default: T;
+    }>): Lazy<AugmentedRouterWithMiddlewares<T, TInitialContext, TInjectedContext, TErrorMap>>;
+}
+/**
+ * The builder variant returned after `.input` is called.
+ * Only procedure-level methods remain available once an input schema is defined.
+ *
+ * @see {@link https://orpc.dev/docs/procedure | Procedure}
+ */
+interface BuilderWithInput<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    '~orpc': BuilderDefinition<TInputSchema, InitialOutputSchema, TErrorMap>;
+    /**
+     * Applies metadata plugins to procedures built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/metadata | Metadata}
+     */
+    'meta'(...plugins: MetaPlugin<TInputSchema, InitialOutputSchema, TErrorMap>[]): BuilderWithInput<TInitialContext, TInjectedContext, TInputSchema, TErrorMap>;
+    /**
+     * Defines typesafe errors that procedures built from this builder can throw
+     * via the `errors` utility in handlers and middleware.
+     *
+     * @see {@link https://orpc.dev/docs/error-handling#typesafe-errors | Error Handling - Typesafe Errors}
+     */
+    'errors'<T extends ErrorMap>(errors: T): BuilderWithInput<TInitialContext, TInjectedContext, TInputSchema, MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Applies a middleware that runs before the handler and can access the
+     * validated input.
+     *
+     * @see {@link https://orpc.dev/docs/middleware | Middleware}
+     */
+    'use'<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, InferSchemaOutput<TInputSchema>, InferSchemaInput<InitialOutputSchema>, $ErrorMap>): BuilderWithInput<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, TInputSchema, MergedErrorMap<$ErrorMap, TErrorMap>>;
+    /**
+     * Adds an additional input schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#multiple-schemas | Procedure - Multiple Schemas}
+     */
+    'input'<T extends AnySchema>(schema: T): BuilderWithInput<TInitialContext, TInjectedContext, MergedSchema<T, TInputSchema>, TErrorMap>;
+    /**
+     * Defines the output schema used to validate and type the procedure output.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+     */
+    'output'<T extends AnySchema>(schema: T): BuilderWithInputOutput<TInitialContext, TInjectedContext, TInputSchema, T, TErrorMap>;
+    /**
+     * Defines the function that implements the procedure and completes the
+     * chain, returning a callable procedure.
+     *
+     * @see {@link https://orpc.dev/docs/procedure | Procedure}
+     */
+    'handler'<T>(handler: ProcedureHandler<MergedContext<TInitialContext, TInjectedContext>, InferSchemaOutput<TInputSchema>, T, ORPCErrorConstructorMap<TErrorMap>>): DecoratedProcedure<TInitialContext, TInjectedContext, TInputSchema, Schema<T>, TErrorMap>;
+}
+/**
+ * The builder variant returned after `.output` is called.
+ * Only procedure-level methods remain available once an output schema is defined.
+ *
+ * @see {@link https://orpc.dev/docs/procedure | Procedure}
+ */
+interface BuilderWithOutput<TInitialContext extends Context, TInjectedContext extends Context, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    '~orpc': BuilderDefinition<InitialInputSchema, TOutputSchema, TErrorMap>;
+    /**
+     * Applies metadata plugins to procedures built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/metadata | Metadata}
+     */
+    'meta'(...plugins: MetaPlugin<InitialInputSchema, TOutputSchema, TErrorMap>[]): BuilderWithOutput<TInitialContext, TInjectedContext, TOutputSchema, TErrorMap>;
+    /**
+     * Defines typesafe errors that procedures built from this builder can throw
+     * via the `errors` utility in handlers and middleware.
+     *
+     * @see {@link https://orpc.dev/docs/error-handling#typesafe-errors | Error Handling - Typesafe Errors}
+     */
+    'errors'<T extends ErrorMap>(errors: T): BuilderWithOutput<TInitialContext, TInjectedContext, TOutputSchema, MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Applies a middleware that runs before the handler and can access the
+     * typed output.
+     *
+     * @see {@link https://orpc.dev/docs/middleware | Middleware}
+     */
+    'use'<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, InferSchemaOutput<InitialInputSchema>, InferSchemaInput<TOutputSchema>, $ErrorMap>): BuilderWithOutput<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, TOutputSchema, MergedErrorMap<$ErrorMap, TErrorMap>>;
+    /**
+     * Defines the input schema used to validate and type the procedure input.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+     */
+    'input'<T extends AnySchema>(schema: T): BuilderWithInputOutput<TInitialContext, TInjectedContext, T, TOutputSchema, TErrorMap>;
+    /**
+     * Adds an additional output schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#multiple-schemas | Procedure - Multiple Schemas}
+     */
+    'output'<T extends AnySchema>(schema: T): BuilderWithOutput<TInitialContext, TInjectedContext, MergedSchema<T, TOutputSchema>, TErrorMap>;
+    /**
+     * Defines the function that implements the procedure and completes the
+     * chain, returning a callable procedure.
+     *
+     * @see {@link https://orpc.dev/docs/procedure | Procedure}
+     */
+    'handler'<T extends InferSchemaInput<TOutputSchema>>(handler: ProcedureHandler<MergedContext<TInitialContext, TInjectedContext>, InferSchemaOutput<InitialInputSchema>, T, ORPCErrorConstructorMap<TErrorMap>>): DecoratedProcedure<TInitialContext, TInjectedContext, InitialInputSchema, TOutputSchema, TErrorMap>;
+}
+/**
+ * The builder variant returned after both `.input` and `.output` are called.
+ * Only procedure-level methods remain available.
+ *
+ * @see {@link https://orpc.dev/docs/procedure | Procedure}
+ */
+interface BuilderWithInputOutput<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    '~orpc': BuilderDefinition<TInputSchema, TOutputSchema, TErrorMap>;
+    /**
+     * Applies metadata plugins to procedures built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/metadata | Metadata}
+     */
+    'meta'(...plugins: MetaPlugin<TInputSchema, TOutputSchema, TErrorMap>[]): BuilderWithInputOutput<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap>;
+    /**
+     * Defines typesafe errors that procedures built from this builder can throw
+     * via the `errors` utility in handlers and middleware.
+     *
+     * @see {@link https://orpc.dev/docs/error-handling#typesafe-errors | Error Handling - Typesafe Errors}
+     */
+    'errors'<T extends ErrorMap>(errors: T): BuilderWithInputOutput<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Applies a middleware that runs before the handler and can access the
+     * validated input and typed output.
+     *
+     * @see {@link https://orpc.dev/docs/middleware | Middleware}
+     */
+    'use'<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>, $ErrorMap>): BuilderWithInputOutput<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, TInputSchema, TOutputSchema, MergedErrorMap<$ErrorMap, TErrorMap>>;
+    /**
+     * Adds an additional input schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#multiple-schemas | Procedure - Multiple Schemas}
+     */
+    'input'<T extends AnySchema>(schema: T): BuilderWithInputOutput<TInitialContext, TInjectedContext, MergedSchema<T, TInputSchema>, TOutputSchema, TErrorMap>;
+    /**
+     * Adds an additional output schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#multiple-schemas | Procedure - Multiple Schemas}
+     */
+    'output'<T extends AnySchema>(schema: T): BuilderWithInputOutput<TInitialContext, TInjectedContext, TInputSchema, MergedSchema<T, TOutputSchema>, TErrorMap>;
+    /**
+     * Defines the function that implements the procedure and completes the
+     * chain, returning a callable procedure.
+     *
+     * @see {@link https://orpc.dev/docs/procedure | Procedure}
+     */
+    'handler'<T extends InferSchemaInput<TOutputSchema>>(handler: ProcedureHandler<MergedContext<TInitialContext, TInjectedContext>, InferSchemaOutput<TInputSchema>, T, ORPCErrorConstructorMap<TErrorMap>>): DecoratedProcedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap>;
+}
+
+/**
+ * The initial context type used when `.$context` is not called.
+ * Augment this interface with `declare module '@orpc/server'` to define
+ * a default initial context type globally.
+ *
+ * @see {@link https://orpc.dev/docs/context#default-initial-context | Context - Default Initial Context}
+ */
+interface DefaultInitialContext {
+}
+interface BuilderDefinition<TInputSchema extends AnySchema, TInjectedContext extends AnySchema, TErrorMap extends ErrorMap> extends ProcedureContractDefinition<TInputSchema, TInjectedContext, TErrorMap>, ProcedureConfig {
+    orderedMiddlewares: OrderedMiddleware[];
+}
+/**
+ * The procedure builder behind `os`. Chain its methods to gradually define
+ * context, middleware, errors, schemas, and finally a handler or router.
+ *
+ * @see {@link https://orpc.dev/docs/procedure | Procedure}
+ */
+declare class Builder<TInitialContext extends Context, TErrorMap extends ErrorMap> {
+    '~orpc': BuilderDefinition<InitialInputSchema, InitialOutputSchema, TErrorMap>;
+    /**
+     * Private constructor to prevent direct instantiation.
+     * Use the static `create` method to initialize a new instance with a safe initial definition.
+     */
+    private constructor();
+    /**
+     * Creates a fresh builder with an empty definition.
+     * Prefer the exported `os` instance over calling this directly.
+     *
+     * @see {@link https://orpc.dev/docs/procedure | Procedure}
+     */
+    static create<T extends Context = DefaultInitialContext>(): Builder<T & object, Record<never, never>>;
+    /**
+     * Declares the initial context type that must be provided when executing
+     * procedures built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/context#initial-context | Context - Initial Context}
+     */
+    $context<T extends Context = DefaultInitialContext>(): Builder<T & object, TErrorMap>;
+    /**
+     * Overrides the procedure configuration, such as disabling runtime
+     * input/output validation.
+     *
+     * @see {@link https://orpc.dev/docs/recipes/validation-customization | Validation Customization}
+     */
+    $config(config: ProcedureConfig): Builder<TInitialContext, TErrorMap>;
+    /**
+     * Applies metadata plugins to procedures built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/metadata | Metadata}
+     */
+    meta(...plugins: MetaPlugin<InitialInputSchema, InitialOutputSchema, TErrorMap>[]): Builder<TInitialContext, TErrorMap>;
+    /**
+     * Defines typesafe errors that procedures built from this builder can throw
+     * via the `errors` utility in handlers and middleware.
+     *
+     * @see {@link https://orpc.dev/docs/error-handling#typesafe-errors | Error Handling - Typesafe Errors}
+     */
+    errors<U extends ErrorMap>(errors: U): Builder<TInitialContext, MergedErrorMap<TErrorMap, U>>;
+    /**
+     * Applies a middleware that runs before the handler of every procedure
+     * built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/middleware | Middleware}
+     */
+    use<$OutContext extends IntersectPick<TInitialContext, $OutContext>, $InContext extends Context = TInitialContext, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | TInitialContext, $OutContext, InferSchemaOutput<InitialInputSchema>, InferSchemaInput<InitialOutputSchema>, $ErrorMap>): BuilderWithMiddlewares<MergedInitialContext<TInitialContext, object, $InContext>, $OutContext, MergedErrorMap<$ErrorMap, TErrorMap>>;
+    /**
+     * Creates a standalone middleware that can be composed and applied to any
+     * compatible builder or procedure with `.use`.
+     *
+     * @see {@link https://orpc.dev/docs/middleware | Middleware}
+     */
+    middleware<$OutContext extends IntersectPick<TInitialContext, $OutContext>, $Input, $Output = any>(middleware: Middleware<TInitialContext, $OutContext, $Input, $Output, TErrorMap>): DecoratedMiddleware<TInitialContext, $OutContext, $Input, $Output, TErrorMap>;
+    /**
+     * Defines the input schema used to validate and type the procedure input.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+     */
+    input<$ extends AnySchema>(schema: $): BuilderWithInput<TInitialContext, object, $, TErrorMap>;
+    /**
+     * Defines the output schema used to validate and type the procedure output.
+     *
+     * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+     */
+    output<$ extends AnySchema>(schema: $): BuilderWithOutput<TInitialContext, object, $, TErrorMap>;
+    /**
+     * Defines the function that implements the procedure and completes the
+     * chain, returning a callable procedure.
+     *
+     * @see {@link https://orpc.dev/docs/procedure | Procedure}
+     */
+    handler<T>(handler: ProcedureHandler<TInitialContext, InferSchemaOutput<InitialInputSchema>, T, ORPCErrorConstructorMap<TErrorMap>>): DecoratedProcedure<TInitialContext, object, InitialInputSchema, Schema<T>, TErrorMap>;
+    /**
+     * Applies the builder's middleware, errors, and metadata to every procedure
+     * in the given router.
+     *
+     * @see {@link https://orpc.dev/docs/router#extending-router | Router - Extending Router}
+     */
+    router<T extends AnyRouter>(router: T): AugmentedRouter<T, TErrorMap>;
+    /**
+     * Like `.router`, but loads the router lazily on first access, which helps
+     * reduce startup time for large applications.
+     *
+     * @see {@link https://orpc.dev/docs/router#lazy-router | Router - Lazy Router}
+     */
+    lazy<T extends AnyRouter>(loader: () => Promise<{
+        default: T;
+    }>): Lazy<AugmentedRouter<T, TErrorMap>>;
+}
+/**
+ * The oRPC procedure builder. Chain methods like `.input`, `.use`, and `.handler`
+ * to define procedures, then compose them into routers.
+ *
+ * @see {@link https://orpc.dev/docs/procedure | Procedure}
+ */
+declare const os: Builder<DefaultInitialContext & object, Record<never, never>>;
+
+declare const DEFAULT_SUCCESS_STATUS = 200;
+declare const DEFAULT_ERROR_STATUS = 500;
+
+declare class ProcedureImplementer<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    '~orpc': BuilderDefinition<TInputSchema, TOutputSchema, TErrorMap>;
+    constructor(definition: BuilderDefinition<TInputSchema, TOutputSchema, TErrorMap>);
+    'use'<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>, $ErrorMap>): ProcedureImplementer<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, TInputSchema, TOutputSchema, TErrorMap>;
+    'handler'(handler: ProcedureHandler<MergedContext<TInitialContext, TInjectedContext>, InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>, ORPCErrorConstructorMap<TErrorMap>>): ImplementedProcedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap>;
+}
+declare class ImplementedProcedure<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> extends Procedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap> {
+    use<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = TErrorMap>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>, $ErrorMap>): ImplementedProcedure<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, TInputSchema, TOutputSchema, TErrorMap>;
+}
+
+declare class SharedRouterImplementer<TContract extends RouterContract, TInitialContext extends Context> {
+    private readonly contract;
+    private readonly config;
+    private readonly middlewares;
+    private constructor();
+    static create<TContract extends RouterContract, TInitialContext extends Context>(contract: TContract, config: ProcedureConfig): SharedRouterImplementer<TContract, TInitialContext>;
+    static create<TContract extends RouterContract, TInitialContext extends Context, TInjectedContext extends Context>(contract: TContract, config: ProcedureConfig, middlewares: AnyMiddleware[]): SharedRouterImplementerWithMiddlewares<TContract, TInitialContext, TInjectedContext>;
+    use<$OutContext extends IntersectPick<TInitialContext, $OutContext>, $InContext extends Context = TInitialContext, $ErrorMap extends ErrorMap = InferRouterContractErrorMap<TContract>>(middleware: Middleware<$InContext | TInitialContext, $OutContext, unknown, unknown, $ErrorMap>): RouterImplementerWithMiddlewares<TContract, MergedInitialContext<TInitialContext, object, $InContext>, $OutContext>;
+    middleware<$OutContext extends IntersectPick<TInitialContext, $OutContext>, $Input, $InContext extends Context = TInitialContext, $Output = any>(middleware: Middleware<$InContext | TInitialContext, $OutContext, $Input, $Output, InferRouterContractErrorMap<TContract>>): DecoratedMiddleware<MergedInitialContext<TInitialContext, object, $InContext>, $OutContext, $Input, $Output, object>;
+    router<T extends ContractedRouter<TContract, any>>(router: T): T;
+    lazy<T extends ContractedRouter<TContract, any>>(loader: () => Promise<{
+        default: T;
+    }>): Lazy<T>;
+}
+interface SharedRouterImplementerWithMiddlewares<TContract extends RouterContract, TInitialContext extends Context, TInjectedContext extends Context> {
+    use<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $ErrorMap extends ErrorMap = InferRouterContractErrorMap<TContract>>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, unknown, unknown, $ErrorMap>): RouterImplementerWithMiddlewares<TContract, MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>>;
+    middleware<$OutContext extends IntersectPick<MergedContext<TInitialContext, TInjectedContext>, $OutContext>, $Input, $InContext extends Context = MergedContext<TInitialContext, TInjectedContext>, $Output = any>(middleware: Middleware<$InContext | MergedContext<TInitialContext, TInjectedContext>, $OutContext, $Input, $Output, InferRouterContractErrorMap<TContract>>): DecoratedMiddleware<MergedInitialContext<TInitialContext, TInjectedContext, $InContext>, MergedContext<TInjectedContext, $OutContext>, $Input, $Output, object>;
+    router<T extends ContractedRouter<TContract, MergedContext<TInitialContext, TInjectedContext>>>(router: T): AugmentedRouterWithMiddlewares<T, TInitialContext, TInjectedContext, object>;
+    lazy<T extends ContractedRouter<TContract, any>>(loader: () => Promise<{
+        default: T;
+    }>): Lazy<AugmentedRouterWithMiddlewares<T, TInitialContext, TInjectedContext, object>>;
+}
+type RouterImplementer<TContract extends RouterContract, TInitialContext extends Context> = TContract extends ProcedureContract<infer $InputSchema, infer $OutputSchema, infer $ErrorMap> ? ProcedureImplementer<TInitialContext, object, $InputSchema, $OutputSchema, $ErrorMap> : Public<SharedRouterImplementer<TContract, TInitialContext>> & {
+    [K in keyof TContract]: TContract[K] extends RouterContract ? RouterImplementer<TContract[K], TInitialContext> : never;
+};
+type RouterImplementerWithMiddlewares<TContract extends RouterContract, TInitialContext extends Context, TInjectedContext extends Context> = TContract extends ProcedureContract<infer $InputSchema, infer $OutputSchema, infer $ErrorMap> ? ProcedureImplementer<TInitialContext, TInjectedContext, $InputSchema, $OutputSchema, $ErrorMap> : SharedRouterImplementerWithMiddlewares<TContract, TInitialContext, TInjectedContext> & {
+    [K in keyof TContract]: TContract[K] extends RouterContract ? RouterImplementerWithMiddlewares<TContract[K], TInitialContext, TInjectedContext> : never;
+};
+declare function createRouterImplementer<TContract extends RouterContract, TInitialContext extends Context>(contract: TContract, config: ProcedureConfig): RouterImplementer<TContract, TInitialContext>;
+
+type Implementer<TContract extends RouterContract, TInitialContext extends Context> = {
+    $context<T extends Context = DefaultInitialContext>(): Implementer<TContract, T & object>;
+    $config(config: ProcedureConfig): Implementer<TContract, TInitialContext>;
+} & RouterImplementer<TContract, TInitialContext>;
+/**
+ * Turns a contract into an implementer, used to implement the contract's
+ * procedures, routers, and middleware with full type safety.
+ *
+ * @see {@link https://orpc.dev/docs/contract/implementation#implementer | Contract Implementation - Implementer}
+ */
+declare function implement<TContract extends RouterContract, TInitialContext extends Context = DefaultInitialContext>(contract: TContract, config?: ProcedureConfig): Implementer<TContract, TInitialContext & object>;
+
+declare function createGuardedProcedureLazy(lazy: Lazy<unknown>): Lazy<AnyProcedure>;
+/**
+ * Create a new procedure that ensure the contract is applied to the procedure.
+ *
+ * .input/.output/.handler mismatches are already caught by the `implementer.router`,
+ * but .errors (in case implemented procedure error map is more than enough) and .meta cannot be
+ * validated that way - so they must be overridden here to ensure the client always sees what the contract defines.
+ */
+declare function createContractProcedure<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap>(procedure: Procedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, any>, contract: ProcedureContract<any, any, TErrorMap>): Procedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap>;
+type CallOptions<TInitialContext extends Context, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> = ProcedureClientOptions<TInitialContext, TOutputSchema, TErrorMap, object> & Omit<ClientOptions<object>, 'context'>;
+type CallRest<TInitialContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> = object extends CallOptions<TInitialContext, TOutputSchema, TErrorMap> ? undefined extends InferSchemaInput<TInputSchema> ? [input?: InferSchemaInput<TInputSchema>, options?: CallOptions<TInitialContext, TOutputSchema, TErrorMap>] : [input: InferSchemaInput<TInputSchema>, options?: CallOptions<TInitialContext, TOutputSchema, TErrorMap>] : [input: InferSchemaInput<TInputSchema>, options: CallOptions<TInitialContext, TOutputSchema, TErrorMap>];
+/**
+ * Quickly call a procedure without creating a client.
+ *
+ * @example
+ * ```ts
+ * const output = await call(getting, 'input')
+ * const output = await call(getting, 'input', { context: { db: 'postgres' } })
+ * ```
+ *
+ * @see {@link https://orpc.dev/docs/client/server-side#one-off-calls | Server-Side Clients - One-Off Calls}
+ */
+declare function call<TInitialContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap>(lazyableProcedure: Lazyable<Procedure<TInitialContext, any, TInputSchema, TOutputSchema, TErrorMap>>, ...[input, options,]: CallRest<TInitialContext, TInputSchema, TOutputSchema, TErrorMap>): PromiseWithError<InferSchemaOutput<TOutputSchema>, ORPCErrorFromErrorMap<TErrorMap> | ThrowableError>;
+
+/**
+ * The client type derived from a router, exposing every procedure as a callable
+ * function while preserving the router's shape.
+ *
+ * @see {@link https://orpc.dev/docs/client/client-side#creating-a-client | Client-Side Clients - Creating a Client}
+ */
+type RouterClient<TRouter extends AnyRouter, TClientContext extends ClientContext = object> = TRouter extends Procedure<any, any, infer $InputSchema, infer $OutputSchema, infer $ErrorMap> ? ProcedureClient<TClientContext, $InputSchema, $OutputSchema, $ErrorMap> : {
+    [K in keyof TRouter]: TRouter[K] extends Lazyable<infer U extends AnyRouter> ? RouterClient<U, TClientContext> : never;
+};
+/**
+ * Creates a server-side client that calls the router's procedures directly,
+ * within the same process, without any network layer.
+ *
+ * @see {@link https://orpc.dev/docs/client/server-side#router-clients | Server-Side Clients - Router Clients}
+ */
+declare function createRouterClient<T extends AnyRouter, TClientContext extends ClientContext = object>(router: Lazyable<T | undefined>, ...rest: MaybeOptionalOptions<ProcedureClientOptions<InferRouterInitialContext<T>, Schema<unknown>, ErrorMap, TClientContext>>): RouterClient<T, TClientContext>;
+
+declare function withHiddenRouterContract<T extends Lazyable<AnyRouter>>(router: T, contract: RouterContract): T;
+declare function getHiddenRouterContract(router: Lazyable<AnyRouter | RouterContract>): RouterContract | undefined;
+
+export { AnyMiddleware, AnyProcedure, AnyRouter, Builder, Context, ContractedRouter, DEFAULT_ERROR_STATUS, DEFAULT_SUCCESS_STATUS, DecoratedProcedure, ImplementedProcedure, InferRouterInitialContext, Lazy, Lazyable, MergedContext, MergedInitialContext, Middleware, OrderedMiddleware, Procedure, ProcedureClient, ProcedureClientOptions, ProcedureConfig, ProcedureHandler, ProcedureImplementer, Router, SharedRouterImplementer, augmentImplementedRouter, augmentRouter, call, createContractProcedure, createGuardedProcedureLazy, createRouterClient, createRouterImplementer, decorateMiddleware, getHiddenRouterContract, getRouter, implement, os, unlazyRouter, walkProcedureContractsAsync, walkProcedureContractsSync, withHiddenRouterContract };
+export type { AugmentImplementedRouterOptions, AugmentRouterOptions, AugmentedRouter, AugmentedRouterWithMiddlewares, BuilderDefinition, BuilderWithInput, BuilderWithInputOutput, BuilderWithMiddlewares, BuilderWithOutput, CallOptions, CallRest, DecoratedMiddleware, DefaultInitialContext, Implementer, RouterClient, RouterImplementer, RouterImplementerWithMiddlewares, SharedRouterImplementerWithMiddlewares, UnlaziedRouter, WalkProcedureContractsLazyResult };

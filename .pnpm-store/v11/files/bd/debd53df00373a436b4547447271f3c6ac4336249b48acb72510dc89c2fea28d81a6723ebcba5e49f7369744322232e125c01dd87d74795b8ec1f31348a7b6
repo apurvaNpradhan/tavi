@@ -1,0 +1,85 @@
+import { toStringOrBytes, resolveMaybeOptionalOptions, sequential, loadBytes } from '@orpc/shared';
+import { ServerPeer, encodePeerMessage, decodePeerMessage, isClientPeerSendMessage } from '@standard-server/peer';
+import { createStandardPeerRequestHandler } from '../standard-peer/index.mjs';
+import { R as RPCHandlerCodec, S as StandardHandler } from '../../shared/server.C0lFtoHU.mjs';
+import '../../shared/server.W91HSRkE.mjs';
+import '@orpc/client';
+import '@standard-server/core';
+import '../../shared/server.Djb_ebJT.mjs';
+import '@orpc/contract';
+import '../../shared/server.BynNaBBA.mjs';
+
+class WebSocketHandler {
+  constructor(handler, options = {}) {
+    this.handler = handler;
+    this.encodePeerMessageOptions = options.encodePeerMessage;
+    this.decodePeerMessageOptions = options.decodePeerMessage;
+  }
+  peers = /* @__PURE__ */ new WeakMap();
+  encodePeerMessageOptions;
+  decodePeerMessageOptions;
+  /**
+   * Handles a single WebSocket message.
+   *
+   * Message order matters. Call this immediately after receiving a message,
+   * before any other async work, to preserve ordering.
+   *
+   * To avoid async Blob reads, configure `ws.binaryType` to return binary data
+   * directly (for example, `arraybuffer`).
+   *
+   * @param ws The WebSocket instance. Use the same instance for all messages.
+   * @param data The received message. Binary data should already be loaded (not a `Blob`).
+   */
+  async message(ws, data, ...rest) {
+    let peer = this.peers.get(ws);
+    if (!peer) {
+      this.peers.set(ws, peer = new ServerPeer(async (message) => {
+        const encoded2 = await encodePeerMessage(message, this.encodePeerMessageOptions);
+        await ws.send(encoded2);
+      }));
+    }
+    const encoded = toStringOrBytes(data);
+    const result = decodePeerMessage(encoded, this.decodePeerMessageOptions);
+    if (result.matched && isClientPeerSendMessage(result.message)) {
+      await peer.message(
+        result.message,
+        createStandardPeerRequestHandler(this.handler, resolveMaybeOptionalOptions(rest))
+      );
+    }
+    return result;
+  }
+  /**
+   * Cleans up peer state for a closed WebSocket.
+   *
+   * @param ws The same WebSocket instance passed to `.message()`.
+   */
+  async close(ws) {
+    const peer = this.peers.get(ws);
+    if (peer) {
+      this.peers.delete(ws);
+      await peer.close();
+    }
+  }
+  /**
+   * Attaches message and close event listeners to a WebSocket.
+   *
+   * Prefer this over calling `.message()` and `.close()` manually.
+   */
+  upgrade(ws, ...rest) {
+    ws.addEventListener("message", sequential(async (event) => {
+      const data = event.data instanceof Blob ? await loadBytes(event.data) : event.data;
+      this.message(ws, data, ...rest);
+    }));
+    ws.addEventListener("close", () => this.close(ws));
+  }
+}
+
+class RPCHandler extends WebSocketHandler {
+  constructor(router, options = {}) {
+    const codec = new RPCHandlerCodec(router, options);
+    const handler = new StandardHandler(codec, options);
+    super(handler, options);
+  }
+}
+
+export { RPCHandler, WebSocketHandler };

@@ -1,0 +1,8 @@
+import { A11yDevtoolsCore } from "../../core/index.js";
+import { createAngularPanel } from "@tanstack/devtools-utils/angular";
+//#region src/angular/production/A11yDevtools.ts
+var [A11yDevtoolsPanel] = createAngularPanel(A11yDevtoolsCore);
+//#endregion
+export { A11yDevtoolsPanel };
+
+//# sourceMappingURL=A11yDevtools.js.map

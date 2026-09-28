@@ -1,0 +1,1 @@
+import { Img, ImgProps } from "./img.cjs";

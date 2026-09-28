@@ -1,0 +1,351 @@
+import { createORPCErrorFromMalformedResponse, isORPCErrorJson, createORPCErrorFromJson } from '@orpc/client';
+import { getRouterContract, ProcedureContract } from '@orpc/contract';
+import { unlazy } from '@orpc/server';
+import { value, pathToHttpPath, mergeHttpPath, isTypescriptObject, stringifyJSON, safeEncodeURIComponent } from '@orpc/shared';
+import { mergeStandardHeaders, parseStandardUrl } from '@standard-server/core';
+import { toStandardHeaders } from '@standard-server/fetch';
+import { O as OpenAPISerializer, D as DEFAULT_OPENAPI_METHOD, a as DEFAULT_OPENAPI_INPUT_STRUCTURE, g as getDynamicPathParams, i as isBodylessMethod, b as DEFAULT_OPENAPI_OUTPUT_STRUCTURE } from './openapi.B1LWf28E.mjs';
+import { g as getOpenAPIMeta } from './openapi.B9PQzqBn.mjs';
+import { s as serializeHeaders } from './openapi.wQKxWEI2.mjs';
+
+const END_SLASH_REGEX = /\/$/;
+class OpenAPILinkCodec {
+  constructor(router, options = {}) {
+    this.router = router;
+    this.baseUrl = options.url ?? "/";
+    this.headers = options.headers ?? {};
+    this.serializer = options.serializer ?? new OpenAPISerializer();
+    this.customErrorResponseBodyDecoder = options.customErrorResponseBodyDecoder;
+  }
+  baseUrl;
+  headers;
+  serializer;
+  customErrorResponseBodyDecoder;
+  async encodeInput(input, path, options) {
+    let headers = toResolvedStandardHeaders(await value(this.headers, options, path, input));
+    if (options.lastEventId !== void 0) {
+      headers = mergeStandardHeaders(headers, { "last-event-id": options.lastEventId });
+    }
+    const baseUrl = await value(this.baseUrl, options, path, input);
+    const procedure = await this.resolveProcedure(path);
+    const meta = getOpenAPIMeta(procedure);
+    const method = meta?.method ?? DEFAULT_OPENAPI_METHOD;
+    const inputStructure = meta?.inputStructure ?? DEFAULT_OPENAPI_INPUT_STRUCTURE;
+    let pathname = meta?.path ?? pathToHttpPath(path);
+    if (meta?.prefix) {
+      pathname = mergeHttpPath(meta.prefix, pathname);
+    }
+    const [basePathname, baseSearch, baseHash] = parseStandardUrl(baseUrl);
+    const dynamicParams = getDynamicPathParams(pathname);
+    if (inputStructure === "compact") {
+      let data = input;
+      if (dynamicParams?.length) {
+        if (!isTypescriptObject(input)) {
+          throw new TypeError(
+            `Input must be an object with "compact" input structure when the path has dynamic params (${dynamicParams.map((p) => p.parameterName).join(", ")}) in call to procedure (${path.join(".")}).`
+          );
+        }
+        const remaining = { ...input };
+        for (let i = dynamicParams.length - 1; i >= 0; i--) {
+          const param = dynamicParams[i];
+          const encoded = this.encodePathParam(input[param.parameterName], param, meta?.paramsStyles?.[param.parameterName], path);
+          pathname = `${pathname.slice(0, param.startIndex)}${encoded}${pathname.slice(param.startIndex + param.segment.length)}`;
+          delete remaining[param.parameterName];
+        }
+        data = Object.keys(remaining).length > 0 ? remaining : void 0;
+      }
+      pathname = `${basePathname.replace(END_SLASH_REGEX, "")}${pathname}`;
+      if (isBodylessMethod(method)) {
+        const queryString2 = this.serializeQueryString(data, meta?.queryStyles);
+        const search2 = combineSearch(baseSearch, queryString2);
+        const url3 = `${pathname}${search2 ?? ""}${baseHash ?? ""}`;
+        return {
+          body: void 0,
+          method,
+          headers,
+          url: url3,
+          signal: options.signal
+        };
+      }
+      const url2 = `${pathname}${baseSearch ?? ""}${baseHash ?? ""}`;
+      return {
+        url: url2,
+        method,
+        headers,
+        body: this.serializer.serialize(data),
+        signal: options.signal
+      };
+    }
+    if (!isValidDetailedInput(input)) {
+      throw new TypeError(`
+        Invalid "detailed" input structure in call to procedure (${path.join(".")}):
+        \u2022 Expected an object or undefined with optional properties:
+          - params (object, required when the path has dynamic params)
+          - query (object)
+          - headers (object)
+          - body (any)
+
+        Actual value:
+          ${stringifyJSON(input)}
+      `);
+    }
+    if (dynamicParams?.length) {
+      if (!input?.params) {
+        throw new TypeError(
+          `The "params" property is required for "detailed" input when the path has dynamic params (${dynamicParams.map((p) => p.parameterName).join(", ")}) in call to procedure (${path.join(".")}).`
+        );
+      }
+      for (let i = dynamicParams.length - 1; i >= 0; i--) {
+        const param = dynamicParams[i];
+        const val = input.params[param.parameterName];
+        const encoded = this.encodePathParam(val, param, meta?.paramsStyles?.[param.parameterName], path);
+        pathname = `${pathname.slice(0, param.startIndex)}${encoded}${pathname.slice(param.startIndex + param.segment.length)}`;
+      }
+    }
+    if (input?.headers) {
+      headers = mergeStandardHeaders(headers, serializeHeaders(input.headers, this.serializer));
+    }
+    pathname = `${basePathname.replace(END_SLASH_REGEX, "")}${pathname}`;
+    const queryString = this.serializeQueryString(input?.query, meta?.queryStyles);
+    const search = combineSearch(baseSearch, queryString);
+    const url = `${pathname}${search ?? ""}${baseHash ?? ""}`;
+    if (isBodylessMethod(method)) {
+      return {
+        body: void 0,
+        method,
+        headers,
+        url,
+        signal: options.signal
+      };
+    }
+    return {
+      url,
+      method,
+      headers,
+      body: this.serializer.serialize(input?.body),
+      signal: options.signal
+    };
+  }
+  encodePathParam(val, param, style, path) {
+    let encoded;
+    if (style === "comma-delimited-array" && Array.isArray(val)) {
+      encoded = val.map((val2) => this.serializer.serialize(val2)).filter((val2) => val2 !== void 0 && val2 !== null).map((val2) => safeEncodeURIComponent(String(val2))).join(",");
+    } else if (style === "comma-delimited-object" && isTypescriptObject(val)) {
+      encoded = Object.entries(val).map(([key, val2]) => [key, this.serializer.serialize(val2)]).filter(([, val2]) => val2 !== void 0 && val2 !== null).map(([key, val2]) => `${safeEncodeURIComponent(String(key))},${safeEncodeURIComponent(String(val2))}`).join(",");
+    } else {
+      const serialized = this.serializer.serialize(val);
+      if (serialized !== void 0 && serialized !== null) {
+        if (param.allowsSlash) {
+          encoded = String(serialized).split("/").map(safeEncodeURIComponent).join("/");
+        } else {
+          encoded = safeEncodeURIComponent(String(serialized));
+        }
+      }
+    }
+    if (!encoded) {
+      throw new TypeError(`Path param "${param.parameterName}" cannot be empty in call to procedure (${path.join(".")}).`);
+    }
+    return encoded;
+  }
+  serializeQueryString(data, queryStyles) {
+    if (!queryStyles || !isTypescriptObject(data)) {
+      return toURLSearchParams(
+        this.serializer.serialize(data, { asFormData: true })
+      ).toString();
+    }
+    const remaining = { ...data };
+    let query = "";
+    Object.entries(queryStyles).forEach(([key, style]) => {
+      if (style === void 0) {
+        return;
+      }
+      const value2 = remaining[key];
+      delete remaining[key];
+      if (style === "primitive") {
+        const serialized = this.serializer.serialize(value2);
+        if (serialized !== void 0 && serialized !== null) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodeURLSearchParamComponent(String(serialized))}`;
+        }
+      } else if (style === "array" && Array.isArray(value2)) {
+        const encodedKey = encodeURLSearchParamComponent(key);
+        value2.forEach((v) => {
+          const s = this.serializer.serialize(v);
+          if (s !== void 0 && s !== null) {
+            query += `&${encodedKey}=${encodeURLSearchParamComponent(String(s))}`;
+          }
+        });
+      } else if (style === "json") {
+        const serialized = this.serializer.serialize(value2);
+        if (serialized !== void 0) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodeURLSearchParamComponent(stringifyJSON(serialized))}`;
+        }
+      } else if (style === "comma-delimited-array" && Array.isArray(value2)) {
+        const encodedValue = encodeDelimitedArray(
+          value2.map((v) => this.serializer.serialize(v)),
+          ","
+        );
+        if (encodedValue !== void 0) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodedValue}`;
+        }
+      } else if (style === "comma-delimited-object" && isTypescriptObject(value2)) {
+        const encodedValue = encodeDelimitedObject(
+          Object.entries(value2).map(([key2, value3]) => [key2, this.serializer.serialize(value3)]),
+          ","
+        );
+        if (encodedValue !== void 0) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodedValue}`;
+        }
+      } else if (style === "pipe-delimited-array" && Array.isArray(value2)) {
+        const encodedValue = encodeDelimitedArray(
+          value2.map((v) => this.serializer.serialize(v)),
+          "%7C"
+        );
+        if (encodedValue !== void 0) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodedValue}`;
+        }
+      } else if (style === "pipe-delimited-object" && isTypescriptObject(value2)) {
+        const encodedValue = encodeDelimitedObject(
+          Object.entries(value2).map(([key2, value3]) => [key2, this.serializer.serialize(value3)]),
+          "%7C"
+        );
+        if (encodedValue !== void 0) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodedValue}`;
+        }
+      } else if (style === "space-delimited-array" && Array.isArray(value2)) {
+        const encodedValue = encodeDelimitedArray(
+          value2.map((v) => this.serializer.serialize(v)),
+          "%20"
+        );
+        if (encodedValue !== void 0) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodedValue}`;
+        }
+      } else if (style === "space-delimited-object" && isTypescriptObject(value2)) {
+        const encodedValue = encodeDelimitedObject(
+          Object.entries(value2).map(([key2, value3]) => [key2, this.serializer.serialize(value3)]),
+          "%20"
+        );
+        if (encodedValue !== void 0) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodedValue}`;
+        }
+      } else {
+        const serialized = this.serializer.serialize(value2);
+        if (serialized !== void 0 && serialized !== null) {
+          query += `&${encodeURLSearchParamComponent(key)}=${encodeURLSearchParamComponent(String(serialized))}`;
+        }
+      }
+    });
+    const form = this.serializer.serialize(remaining, { asFormData: true });
+    query = `${toURLSearchParams(form).toString()}${query}`;
+    if (query.startsWith("&")) {
+      query = query.slice(1);
+    }
+    return query || void 0;
+  }
+  async decodeResponse(response, path, _options) {
+    const isOk = response.status < 400;
+    const procedure = await this.resolveProcedure(path);
+    const meta = getOpenAPIMeta(procedure);
+    const body = await response.resolveBody(meta?.responseBodyHint);
+    const deserialized = await (async () => {
+      try {
+        return this.serializer.deserialize(body);
+      } catch (error) {
+        throw createORPCErrorFromMalformedResponse({
+          message: "Invalid OpenAPI response format.",
+          response: { status: response.status, headers: response.headers, body },
+          cause: error
+        });
+      }
+    })();
+    if (!isOk) {
+      const customError = this.customErrorResponseBodyDecoder?.(deserialized, response);
+      if (customError !== void 0 && customError !== null) {
+        return { kind: "error", error: customError };
+      }
+      if (isORPCErrorJson(deserialized)) {
+        return { kind: "error", error: createORPCErrorFromJson(deserialized) };
+      }
+      return {
+        kind: "error",
+        error: createORPCErrorFromMalformedResponse({ response: { headers: response.headers, status: response.status, body } })
+      };
+    }
+    const outputStructure = meta?.outputStructure ?? DEFAULT_OPENAPI_OUTPUT_STRUCTURE;
+    return outputStructure === "compact" ? { kind: "output", output: deserialized } : {
+      kind: "output",
+      output: {
+        status: response.status,
+        headers: response.headers,
+        body: deserialized
+      }
+    };
+  }
+  async resolveProcedure(path) {
+    const { default: maybeProcedure } = await unlazy(getRouterContract(this.router, path));
+    if (!(maybeProcedure instanceof ProcedureContract)) {
+      throw new TypeError(`Expected a procedure or contract at path (${path.join(".")})`);
+    }
+    return maybeProcedure;
+  }
+}
+function combineSearch(baseSearch, additionalSearch) {
+  if (!baseSearch && !additionalSearch) {
+    return void 0;
+  }
+  if (!additionalSearch) {
+    return baseSearch;
+  }
+  if (!baseSearch) {
+    return `?${additionalSearch}`;
+  }
+  return `${baseSearch}&${additionalSearch}`;
+}
+function toResolvedStandardHeaders(headers) {
+  if (typeof headers.forEach === "function") {
+    return toStandardHeaders(headers);
+  }
+  return headers;
+}
+function isValidDetailedInput(input) {
+  if (!isTypescriptObject(input)) {
+    return input === void 0;
+  }
+  if (input.params !== void 0 && !isTypescriptObject(input.params)) {
+    return false;
+  }
+  if (input.query !== void 0 && !isTypescriptObject(input.query)) {
+    return false;
+  }
+  if (input.headers !== void 0 && !isTypescriptObject(input.headers)) {
+    return false;
+  }
+  return true;
+}
+function encodeURLSearchParamComponent(value2) {
+  return new URLSearchParams({ "": value2 }).toString().slice(1);
+}
+function toURLSearchParams(form) {
+  const params = new URLSearchParams();
+  for (const [key, value2] of form) {
+    params.append(key, String(value2));
+  }
+  return params;
+}
+function encodeDelimitedArray(serializedValues, encodedDelimiter) {
+  const strings = serializedValues.filter((v) => v !== null && v !== void 0).map(String);
+  if (!strings.length) {
+    return void 0;
+  }
+  return strings.map(encodeURLSearchParamComponent).join(encodedDelimiter);
+}
+function encodeDelimitedObject(entries, encodedDelimiter) {
+  const strings = entries.filter(([v]) => v !== null && v !== void 0).map(([k, v]) => [k, String(v)]);
+  if (!strings.length) {
+    return void 0;
+  }
+  return strings.map(
+    ([key, value2]) => `${encodeURLSearchParamComponent(key)}${encodedDelimiter}${encodeURLSearchParamComponent(value2)}`
+  ).join(encodedDelimiter);
+}
+
+export { OpenAPILinkCodec as O };

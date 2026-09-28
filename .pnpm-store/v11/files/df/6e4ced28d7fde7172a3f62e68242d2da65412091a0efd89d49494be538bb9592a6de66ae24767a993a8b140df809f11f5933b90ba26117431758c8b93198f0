@@ -1,0 +1,417 @@
+import { c as convertRecord, i as isRecord, g as getRef, D as DROP, d as deepClone, m as mapRecord, a as mapArray, o as operationFields } from './shared/downgrader.COVMw0me.mjs';
+
+function convertRefOr(value, convert) {
+  const ref = getRef(value);
+  return ref === void 0 ? convert(value) : { $ref: ref };
+}
+function refMap(convert) {
+  return (item) => mapRecord(item, (entry) => convertRefOr(entry, convert));
+}
+function refList(convert) {
+  return (item) => mapArray(item, (entry) => convertRefOr(entry, convert));
+}
+function applyTypes(types, schema, out) {
+  const nullable = types.includes("null");
+  const rest = types.filter((item) => item !== "null");
+  if (rest.length === 1) {
+    out.type = rest[0];
+    if (nullable) {
+      out.nullable = true;
+    }
+    return;
+  }
+  if (rest.length === 0) {
+    if (!nullable) {
+      return;
+    }
+    out.nullable = true;
+    if ("const" in schema) {
+      if (schema.const !== null) {
+        out.not = {};
+      }
+    } else if (Array.isArray(schema.enum)) {
+      if (schema.enum.includes(null)) {
+        out.enum = [null];
+      } else {
+        out.not = {};
+      }
+    } else if (!("enum" in schema)) {
+      out.enum = [null];
+    }
+    return;
+  }
+  const variants = rest.map((item) => {
+    const variant = { type: item };
+    if (item === "array") {
+      variant.items = out.items === void 0 ? {} : deepClone(out.items);
+    }
+    if (nullable) {
+      variant.nullable = true;
+    }
+    return variant;
+  });
+  if (out.anyOf === void 0) {
+    out.anyOf = variants;
+  } else if (out.allOf === void 0 || Array.isArray(out.allOf)) {
+    out.allOf = [...Array.isArray(out.allOf) ? out.allOf : [], { anyOf: variants }];
+  }
+}
+function convertType(schema, out) {
+  const { type } = schema;
+  if (type === void 0) {
+    return;
+  }
+  if (typeof type === "string") {
+    applyTypes([type], schema, out);
+    return;
+  }
+  if (Array.isArray(type)) {
+    const types = [...new Set(type.filter((item) => typeof item === "string"))];
+    if (types.length > 0 || type.length === 0) {
+      applyTypes(types, schema, out);
+      return;
+    }
+  }
+  out.type = deepClone(type);
+}
+function convertConst(schema, out) {
+  if (!("const" in schema)) {
+    return;
+  }
+  out.enum = [deepClone(schema.const)];
+  if (schema.const === null) {
+    out.nullable = true;
+  }
+}
+function convertExamples(schema, out) {
+  if (Array.isArray(schema.examples) && schema.examples.length > 0 && !("example" in schema)) {
+    out.example = deepClone(schema.examples[0]);
+  }
+}
+function convertExclusiveBounds(schema, out) {
+  const { exclusiveMaximum, exclusiveMinimum, maximum, minimum } = schema;
+  if (typeof exclusiveMinimum === "number" && !(typeof minimum === "number" && minimum > exclusiveMinimum)) {
+    out.minimum = exclusiveMinimum;
+    out.exclusiveMinimum = true;
+  }
+  if (typeof exclusiveMaximum === "number" && !(typeof maximum === "number" && maximum < exclusiveMaximum)) {
+    out.maximum = exclusiveMaximum;
+    out.exclusiveMaximum = true;
+  }
+}
+function convertContentKeywords(schema, out) {
+  if (out.format !== void 0) {
+    return;
+  }
+  if (schema.contentEncoding === "base64") {
+    out.format = "byte";
+  } else if (schema.contentEncoding === void 0 && schema.contentMediaType === "application/octet-stream") {
+    out.format = "binary";
+  }
+}
+function convertXml(value, schemaType) {
+  return convertRecord(value, { nodeType: DROP }, (out, xml) => {
+    if (xml.nodeType === "attribute") {
+      out.attribute = true;
+    } else if (xml.nodeType === "element" && (schemaType === "array" || Array.isArray(schemaType) && schemaType.includes("array"))) {
+      out.wrapped = true;
+    }
+    return out;
+  });
+}
+function finishSchema(out, schema) {
+  convertType(schema, out);
+  convertConst(schema, out);
+  convertExamples(schema, out);
+  convertExclusiveBounds(schema, out);
+  convertContentKeywords(schema, out);
+  if (out.type === "array" && out.items === void 0) {
+    out.items = {};
+  }
+  if (typeof schema.$ref === "string") {
+    if (out.allOf === void 0 || Array.isArray(out.allOf)) {
+      out.allOf = [{ $ref: schema.$ref }, ...Array.isArray(out.allOf) ? out.allOf : []];
+    } else {
+      out.$ref = schema.$ref;
+    }
+  }
+  return out;
+}
+function convertSubschemas(item) {
+  return mapArray(item, convertSchema);
+}
+const SCHEMA_FIELDS = {
+  $anchor: DROP,
+  $comment: DROP,
+  $defs: DROP,
+  $dynamicAnchor: DROP,
+  $dynamicRef: DROP,
+  $id: DROP,
+  $ref: (item) => typeof item === "string" ? DROP : deepClone(item),
+  $schema: DROP,
+  $vocabulary: DROP,
+  additionalProperties: (item, schema) => {
+    if ("patternProperties" in schema) {
+      return DROP;
+    }
+    return typeof item === "boolean" ? item : convertSchema(item);
+  },
+  allOf: convertSubschemas,
+  anyOf: convertSubschemas,
+  const: DROP,
+  contains: DROP,
+  contentEncoding: DROP,
+  contentMediaType: DROP,
+  contentSchema: DROP,
+  dependentRequired: DROP,
+  dependentSchemas: DROP,
+  else: DROP,
+  enum: (item) => Array.isArray(item) && item.length === 0 ? DROP : deepClone(item),
+  examples: DROP,
+  exclusiveMaximum: (item) => typeof item === "number" ? DROP : deepClone(item),
+  exclusiveMinimum: (item) => typeof item === "number" ? DROP : deepClone(item),
+  if: DROP,
+  items: (item, schema) => "prefixItems" in schema ? DROP : convertSchema(item),
+  maxContains: DROP,
+  minContains: DROP,
+  not: convertSchema,
+  oneOf: convertSubschemas,
+  patternProperties: DROP,
+  prefixItems: DROP,
+  properties: (item) => mapRecord(item, convertSchema),
+  propertyNames: DROP,
+  required: (item) => {
+    if (!Array.isArray(item)) {
+      return deepClone(item);
+    }
+    return item.length === 0 ? DROP : deepClone([...new Set(item)]);
+  },
+  then: DROP,
+  type: DROP,
+  unevaluatedItems: DROP,
+  unevaluatedProperties: DROP,
+  xml: (item, schema) => convertXml(item, schema.type)
+};
+function convertSchema(schema) {
+  if (schema === true) {
+    return {};
+  }
+  if (schema === false) {
+    return { not: {} };
+  }
+  if (isRecord(schema) && typeof schema.$ref === "string" && Object.keys(schema).length === 1) {
+    return { $ref: schema.$ref };
+  }
+  return convertRecord(schema, SCHEMA_FIELDS, finishSchema);
+}
+function downgradeSchemaV31ToV30(schema) {
+  return convertSchema(schema);
+}
+const PATH_ITEMS_REF_PREFIX = "#/components/pathItems/";
+const SECURITY_SCHEMES_REF_PREFIX = "#/components/securitySchemes/";
+function resolveSchemeType(name, schemes, seen) {
+  if (seen.has(name) || !Object.hasOwn(schemes, name)) {
+    return void 0;
+  }
+  const scheme = schemes[name];
+  if (!isRecord(scheme)) {
+    return void 0;
+  }
+  if (typeof scheme.type === "string") {
+    return scheme.type;
+  }
+  const ref = getRef(scheme);
+  if (ref !== void 0 && ref.startsWith(SECURITY_SCHEMES_REF_PREFIX)) {
+    const target = ref.slice(SECURITY_SCHEMES_REF_PREFIX.length);
+    if (target !== "" && !target.includes("/")) {
+      seen.add(name);
+      return resolveSchemeType(target, schemes, seen);
+    }
+  }
+  return void 0;
+}
+function createContext(spec) {
+  const components = isRecord(spec) ? spec.components : void 0;
+  const pathItems = isRecord(components) ? components.pathItems : void 0;
+  const schemes = isRecord(components) ? components.securitySchemes : void 0;
+  const schemeTypes = /* @__PURE__ */ new Map();
+  if (isRecord(schemes)) {
+    for (const name of Object.keys(schemes)) {
+      const type = resolveSchemeType(name, schemes, /* @__PURE__ */ new Set());
+      if (type !== void 0) {
+        schemeTypes.set(name, type);
+      }
+    }
+  }
+  return {
+    inlining: /* @__PURE__ */ new Set(),
+    pathItems: isRecord(pathItems) ? pathItems : void 0,
+    schemeTypes
+  };
+}
+function isMutualTls(name, context) {
+  return context.schemeTypes.get(name) === "mutualTLS";
+}
+function convertRequirement(value, context) {
+  if (!isRecord(value)) {
+    return deepClone(value);
+  }
+  const entries = Object.entries(value);
+  const kept = entries.filter(([name]) => !isMutualTls(name, context));
+  if (kept.length === 0 && entries.length > 0) {
+    return DROP;
+  }
+  return Object.fromEntries(kept.map(([name, scopes]) => {
+    const type = context.schemeTypes.get(name);
+    const scoped = type === void 0 || type === "oauth2" || type === "openIdConnect";
+    return [name, Array.isArray(scopes) && !scoped ? [] : deepClone(scopes)];
+  }));
+}
+function convertSecurity(value, context) {
+  if (!Array.isArray(value)) {
+    return deepClone(value);
+  }
+  const out = value.map((item) => convertRequirement(item, context)).filter((item) => item !== DROP);
+  return value.length > 0 && out.length === 0 ? DROP : out;
+}
+function convertInfo(value) {
+  return convertRecord(value, {
+    license: (item) => convertRecord(item, { identifier: DROP }),
+    summary: DROP
+  });
+}
+function convertParameterOrHeader(value) {
+  return convertRecord(
+    value,
+    {
+      content: convertContent,
+      examples: refMap(deepClone),
+      schema: convertSchema
+    },
+    (out, parameter) => {
+      if (parameter.in === "path") {
+        out.required = true;
+      }
+      return out;
+    }
+  );
+}
+function convertEncoding(value) {
+  return convertRecord(value, { headers: refMap(convertParameterOrHeader) });
+}
+function convertMediaType(value) {
+  return convertRecord(value, {
+    encoding: (item) => mapRecord(item, convertEncoding),
+    examples: refMap(deepClone),
+    schema: convertSchema
+  });
+}
+function convertContent(item) {
+  return mapRecord(item, convertMediaType);
+}
+function convertRequestBody(value) {
+  return convertRecord(value, { content: convertContent });
+}
+function convertResponse(value) {
+  return convertRecord(value, {
+    content: convertContent,
+    headers: refMap(convertParameterOrHeader),
+    links: refMap(deepClone)
+  });
+}
+function convertResponses(item) {
+  return mapRecord(item, (entry, key) => key.startsWith("x-") ? deepClone(entry) : convertRefOr(entry, convertResponse));
+}
+function convertOperation(value, context) {
+  return convertRecord(
+    value,
+    {
+      callbacks: refMap((item) => convertCallback(item, context)),
+      parameters: refList(convertParameterOrHeader),
+      requestBody: (item) => convertRefOr(item, convertRequestBody),
+      responses: convertResponses,
+      security: (item) => convertSecurity(item, context)
+    },
+    (out) => {
+      if (out.responses === void 0) {
+        out.responses = { default: { description: "" } };
+      }
+      return out;
+    }
+  );
+}
+function convertCallback(value, context) {
+  return mapRecord(value, (item, key) => key.startsWith("x-") ? deepClone(item) : convertPathItem(item, context));
+}
+function resolvePathItemRef(value, context) {
+  const ref = getRef(value);
+  if (ref === void 0 || !ref.startsWith(PATH_ITEMS_REF_PREFIX)) {
+    return void 0;
+  }
+  const name = ref.slice(PATH_ITEMS_REF_PREFIX.length);
+  if (name === "" || name.includes("/") || context.inlining.has(name) || context.pathItems === void 0 || !Object.hasOwn(context.pathItems, name)) {
+    return void 0;
+  }
+  const target = context.pathItems[name];
+  return isRecord(target) ? [name, target] : void 0;
+}
+function convertPathItem(value, context) {
+  if (!isRecord(value)) {
+    return deepClone(value);
+  }
+  const resolved = resolvePathItemRef(value, context);
+  if (resolved === void 0) {
+    return convertRecord(value, {
+      ...operationFields((item) => convertOperation(item, context)),
+      parameters: refList(convertParameterOrHeader)
+    });
+  }
+  const [name, target] = resolved;
+  const { $ref: _, ...own } = value;
+  context.inlining.add(name);
+  try {
+    return convertPathItem({ ...target, ...own }, context);
+  } finally {
+    context.inlining.delete(name);
+  }
+}
+function convertPaths(value, context) {
+  return mapRecord(value, (item, key) => key.startsWith("/") ? convertPathItem(item, context) : deepClone(item));
+}
+function convertComponents(value, context) {
+  return convertRecord(value, {
+    callbacks: refMap((item) => convertCallback(item, context)),
+    examples: refMap(deepClone),
+    headers: refMap(convertParameterOrHeader),
+    links: refMap(deepClone),
+    parameters: refMap(convertParameterOrHeader),
+    pathItems: DROP,
+    requestBodies: refMap(convertRequestBody),
+    responses: refMap(convertResponse),
+    schemas: (item) => mapRecord(item, convertSchema),
+    securitySchemes: (item) => mapRecord(item, (scheme, name) => isMutualTls(name, context) ? DROP : convertRefOr(scheme, deepClone))
+  });
+}
+function downgradeSpecV31ToV30(spec) {
+  const context = createContext(spec);
+  return convertRecord(
+    spec,
+    {
+      components: (item) => convertComponents(item, context),
+      info: convertInfo,
+      jsonSchemaDialect: DROP,
+      paths: (item) => convertPaths(item, context),
+      security: (item) => convertSecurity(item, context),
+      webhooks: DROP
+    },
+    (out) => {
+      out.openapi = "3.0.4";
+      if (out.paths === void 0) {
+        out.paths = {};
+      }
+      return out;
+    }
+  );
+}
+
+export { downgradeSchemaV31ToV30, downgradeSpecV31ToV30 };

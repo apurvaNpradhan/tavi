@@ -1,0 +1,35 @@
+import { resolveSemanticTheme } from "@tanstack/devtools-ui/internal";
+//#region src/core/styles/severity-theme.ts
+var severity = {
+	critical: {
+		role: "error",
+		label: "Critical",
+		outline: "3px solid"
+	},
+	serious: {
+		role: "error",
+		label: "Serious",
+		outline: "2px solid"
+	},
+	moderate: {
+		role: "warning",
+		label: "Moderate",
+		outline: "2px solid"
+	},
+	minor: {
+		role: "info",
+		label: "Minor",
+		outline: "2px dashed"
+	}
+};
+function getSeverityStyle(impact, theme) {
+	const definition = severity[impact];
+	return {
+		...definition,
+		colors: resolveSemanticTheme(theme).color.status[definition.role]
+	};
+}
+//#endregion
+export { getSeverityStyle };
+
+//# sourceMappingURL=severity-theme.js.map

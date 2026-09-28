@@ -1,0 +1,68 @@
+import { resolveMaybeOptionalOptions } from '@orpc/shared';
+import { ServerPeer, encodePeerMessage, decodePeerMessage, isClientPeerSendMessage } from '@standard-server/peer';
+import { createStandardPeerRequestHandler } from '../standard-peer/index.mjs';
+import { R as RPCHandlerCodec, S as StandardHandler } from '../../shared/server.C0lFtoHU.mjs';
+import '../../shared/server.W91HSRkE.mjs';
+import '@orpc/client';
+import '@standard-server/core';
+import '../../shared/server.Djb_ebJT.mjs';
+import '@orpc/contract';
+import '../../shared/server.BynNaBBA.mjs';
+
+class experimental_CrosswsHandler {
+  constructor(handler, options = {}) {
+    this.handler = handler;
+    this.encodePeerMessageOptions = options.encodePeerMessage;
+    this.decodePeerMessageOptions = options.decodePeerMessage;
+  }
+  peers = /* @__PURE__ */ new WeakMap();
+  encodePeerMessageOptions;
+  decodePeerMessageOptions;
+  /**
+   * Handles a single WebSocket message.
+   *
+   * Message order matters. Call this immediately after receiving a message,
+   * before any other async work, to preserve ordering.
+   *
+   * @param ws The crossws peer instance. Use the same instance for all messages.
+   */
+  async message(ws, message, ...rest) {
+    let peer = this.peers.get(ws);
+    if (!peer) {
+      this.peers.set(ws, peer = new ServerPeer(async (message2) => {
+        ws.send(await encodePeerMessage(message2, this.encodePeerMessageOptions));
+      }));
+    }
+    const encodedMessage = typeof message.rawData === "string" ? message.rawData : message.uint8Array();
+    const result = decodePeerMessage(encodedMessage, this.decodePeerMessageOptions);
+    if (result.matched && isClientPeerSendMessage(result.message)) {
+      await peer.message(
+        result.message,
+        createStandardPeerRequestHandler(this.handler, resolveMaybeOptionalOptions(rest))
+      );
+    }
+    return result;
+  }
+  /**
+   * Cleans up peer state for a closed WebSocket.
+   *
+   * @param ws The same crossws peer instance passed to `.message()`.
+   */
+  async close(ws) {
+    const server = this.peers.get(ws);
+    if (server) {
+      await server.close();
+      this.peers.delete(ws);
+    }
+  }
+}
+
+class experimental_RPCHandler extends experimental_CrosswsHandler {
+  constructor(router, options = {}) {
+    const codec = new RPCHandlerCodec(router, options);
+    const handler = new StandardHandler(codec, options);
+    super(handler, options);
+  }
+}
+
+export { experimental_CrosswsHandler, experimental_RPCHandler };

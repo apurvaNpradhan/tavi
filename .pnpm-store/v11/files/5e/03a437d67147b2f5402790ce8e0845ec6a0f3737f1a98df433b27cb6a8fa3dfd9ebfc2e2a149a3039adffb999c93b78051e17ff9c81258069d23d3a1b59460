@@ -1,0 +1,10 @@
+import { A11yIssue, SeverityThreshold } from '../types/types.js';
+interface A11yIssueCardProps {
+    issue: A11yIssue;
+    impact: SeverityThreshold;
+    selected: boolean;
+    onSelect: () => void;
+    onDisableRule: (ruleId: string) => void;
+}
+export declare function A11yIssueCard(props: A11yIssueCardProps): import("solid-js").JSX.Element;
+export {};

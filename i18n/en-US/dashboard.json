@@ -1,0 +1,55 @@
+{
+  "nav": {
+    "today": "Today",
+    "conversationGroup": "Conversations",
+    "dashboard": "Dashboard",
+    "members": "Members",
+    "conversations": "Conversations"
+  },
+  "accountMenu": {
+    "settings": "Settings",
+    "inviteAndManageMembers": "Invite and manage members",
+    "switchWorkspace": "Switch workspace",
+    "workspaces": "Workspaces",
+    "createOrJoin": "Create or join a workspace…",
+    "unnamedUser": "Your account",
+    "logOut": "Log out"
+  },
+  "members": {
+    "title": "Members",
+    "placeholder": "Invite teammates and manage their roles.",
+    "subtitle": "People with access to {{name}}.",
+    "people": "people",
+    "inviteTitle": "Invite someone",
+    "email": "Email address",
+    "emailPlaceholder": "name@example.com",
+    "role": "Role",
+    "roles": { "viewer": "Viewer", "member": "Member", "admin": "Admin", "owner": "Owner" },
+    "invite": "Send invite",
+    "inviteSent": "Invitation sent",
+    "inviteFailed": "Could not send the invitation. Try again.",
+    "roleFailed": "Could not update this member’s role. Try again.",
+    "removeFailed": "Could not remove this member. Try again.",
+    "cancelFailed": "Could not cancel this invitation. Try again.",
+    "linkCopied": "Invitation link copied",
+    "copyFailed": "Could not copy the invitation link.",
+    "current": "Workspace members",
+    "loadFailed": "Could not load members. Try again.",
+    "workspacesLoadFailed": "Could not load workspaces. Try again.",
+    "retry": "Try again",
+    "invitationsLoadFailed": "Could not load pending invitations. Try again.",
+    "changeRoleFor": "Change role for {{email}}",
+    "you": "You",
+    "removeMember": "Remove {{email}}",
+    "empty": "No members yet.",
+    "pending": "Pending invitations",
+    "expires": "Expires {{date}}",
+    "copyLink": "Copy link",
+    "cancelInvitation": "Cancel invitation for {{email}}",
+    "noPending": "No pending invitations."
+  },
+  "settings": {
+    "title": "Settings",
+    "placeholder": "Rename this workspace or change how it is described."
+  }
+}

@@ -1,0 +1,96 @@
+import { value } from '@orpc/shared';
+import { ClientPeer, encodePeerMessage, decodePeerMessage, isServerPeerSendMessage, isPeerMessage } from '@standard-server/peer';
+import { S as StandardLink, R as RPCLinkCodec } from '../../shared/client.VXsLhJtT.mjs';
+import '@standard-server/core';
+import '@standard-server/fetch';
+import '../../shared/client.BYHnU_Z3.mjs';
+import '../../shared/client.Dtv1JPkU.mjs';
+
+function postMessagePortMessage(port, data, transfer) {
+  if (transfer) {
+    port.postMessage(data, transfer);
+  } else {
+    port.postMessage(data);
+  }
+}
+function onMessagePortMessage(port, callback) {
+  if ("addEventListener" in port) {
+    port.addEventListener("message", (event) => {
+      callback(event.data);
+    });
+  } else if ("on" in port) {
+    port.on("message", (event) => {
+      callback(event?.data);
+    });
+  } else if ("onMessage" in port) {
+    port.onMessage.addListener((data) => {
+      callback(data);
+    });
+  } else {
+    throw new Error("Cannot find a addEventListener/on/onMessage method on the port");
+  }
+}
+function onMessagePortClose(port, callback) {
+  if ("addEventListener" in port) {
+    port.addEventListener("close", () => {
+      callback();
+    });
+  } else if ("on" in port) {
+    port.on("close", () => {
+      callback();
+    });
+  } else if ("onDisconnect" in port) {
+    port.onDisconnect.addListener(() => {
+      callback();
+    });
+  } else {
+    throw new Error("Cannot find a addEventListener/on/onDisconnect method on the port");
+  }
+}
+
+class MessagePortLinkTransport {
+  peer;
+  constructor({ port, experimental_transfer, encodePeerMessage: encodePeerMessageOptions, decodePeerMessage: decodePeerMessageOptions }) {
+    this.peer = new ClientPeer(async (message) => {
+      const transfer = await value(experimental_transfer, message, port);
+      if (transfer) {
+        postMessagePortMessage(port, message, transfer);
+      } else {
+        postMessagePortMessage(port, await encodePeerMessage(message, encodePeerMessageOptions));
+      }
+    });
+    onMessagePortMessage(port, async (data) => {
+      let peerMessage;
+      if (typeof data === "string" || data instanceof Uint8Array) {
+        const result = decodePeerMessage(data, decodePeerMessageOptions);
+        if (result.matched && isServerPeerSendMessage(result.message)) {
+          peerMessage = result.message;
+        }
+      } else if (isPeerMessage(data) && isServerPeerSendMessage(data)) {
+        peerMessage = data;
+      }
+      if (peerMessage === void 0) {
+        return { matched: false };
+      }
+      await this.peer.message(peerMessage);
+      return { matched: true };
+    });
+    onMessagePortClose(port, async () => {
+      await this.peer.close();
+    });
+  }
+  async send(standardRequest, _path, _options) {
+    const standardResponse = await this.peer.request(standardRequest);
+    return standardResponse;
+  }
+}
+
+class RPCLink extends StandardLink {
+  constructor(options) {
+    const codec = new RPCLinkCodec(options);
+    const transport = new MessagePortLinkTransport(options);
+    super(codec, transport, options);
+  }
+}
+
+export { MessagePortLinkTransport, RPCLink, onMessagePortClose, onMessagePortMessage, postMessagePortMessage };

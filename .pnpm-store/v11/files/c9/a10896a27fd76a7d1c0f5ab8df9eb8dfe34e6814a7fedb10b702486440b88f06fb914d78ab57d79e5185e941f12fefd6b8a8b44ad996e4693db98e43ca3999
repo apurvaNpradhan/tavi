@@ -1,0 +1,77 @@
+import { SupportedMessagePort } from '@orpc/client/message-port';
+import { Value, Promisable, MaybeOptionalOptions } from '@orpc/shared';
+import { ServerPeer, EncodePeerMessageOptions, DecodePeerMessageOptions } from '@standard-server/peer';
+import { Context } from '../../index.mjs';
+import { StandardHandler, StandardHandlerOptions } from '../standard/index.mjs';
+import { FriendlyStandardHandlerHandleOptions } from '../standard/index.mjs';
+import { Router } from '../../index.mjs';
+import { RPCHandlerCodecOptions } from '../standard/index.mjs';
+import '@orpc/client';
+import '@orpc/contract';
+import '@standard-server/core';
+
+type DecodedResponseMessage = ConstructorParameters<typeof ServerPeer>[0] extends (message: infer TMessage) => unknown ? TMessage : never;
+interface MessagePortHandlerOptions<_T extends Context> {
+    /**
+     * By default, oRPC encodes peer messages as strings or binary data before sending them over the message port.
+     * Use this option to bypass encoding and leverage the full capabilities of the
+     * [MessagePort: postMessage() method](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort/postMessage),
+     * such as transferring object ownership or supporting non-serializable objects like `OffscreenCanvas` or improving performance.
+     *
+     * @remarks
+     * **Note**: Returning `null` or `undefined` disables this feature.
+     * **Warning**: Ensure your message port implementation supports `transferable` objects before enabling this.
+     */
+    experimental_transfer?: Value<Promisable<object[] | null | undefined>, [message: DecodedResponseMessage, port: SupportedMessagePort]>;
+    /**
+     * Options for encoding peer messages. such as `prefix` for distinguishing messages on the same channel..
+     */
+    encodePeerMessage?: EncodePeerMessageOptions | undefined;
+    /**
+     * Options for decoding peer messages. such as `prefix` for distinguishing messages on the same channel..
+     */
+    decodePeerMessage?: DecodePeerMessageOptions | undefined;
+}
+declare class MessagePortHandler<T extends Context> {
+    private readonly handler;
+    private readonly peers;
+    private readonly transfer;
+    private readonly encodePeerMessageOptions;
+    private readonly decodePeerMessageOptions;
+    constructor(handler: StandardHandler<T>, options?: NoInfer<MessagePortHandlerOptions<T>>);
+    /**
+     * Attaches message and close listeners to a message port.
+     *
+     * Prefer this over calling `.message()` and `.close()` manually.
+     */
+    upgrade(port: SupportedMessagePort, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): void;
+    /**
+     * Handles a single message received from a message port.
+     *
+     * @param port The message port instance. Use the same instance for all messages.
+     */
+    message(port: SupportedMessagePort, data: unknown, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): Promise<{
+        matched: boolean;
+    }>;
+    /**
+     * Cleans up peer state for a closed message port.
+     *
+     * @param port The same message port instance passed to `.message()`.
+     */
+    close(port: SupportedMessagePort): Promise<void>;
+}
+
+interface RPCHandlerOptions<T extends Context> extends StandardHandlerOptions<T>, RPCHandlerCodecOptions<T>, MessagePortHandlerOptions<T> {
+}
+/**
+ * Serves an oRPC router over the RPC protocol on a message port,
+ * such as browser extensions, Electron, or worker threads.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/message-port | Message Port Adapter}
+ */
+declare class RPCHandler<T extends Context> extends MessagePortHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<RPCHandlerOptions<T>>);
+}
+
+export { MessagePortHandler, RPCHandler };
+export type { MessagePortHandlerOptions, RPCHandlerOptions };

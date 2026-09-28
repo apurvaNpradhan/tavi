@@ -1,0 +1,83 @@
+//#region src/core/utils/export-audit.uitls.ts
+/**
+* Export audit results to JSON format
+*/
+function exportToJson(result, _options = {}) {
+	const exportData = {
+		meta: {
+			exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+			url: result.url,
+			auditTimestamp: result.timestamp,
+			duration: result.duration,
+			context: result.context
+		},
+		summary: result.summary,
+		issues: result.issues.map((issue) => ({
+			id: issue.id,
+			ruleId: issue.ruleId,
+			impact: issue.impact,
+			message: issue.message,
+			help: issue.help,
+			helpUrl: issue.helpUrl,
+			wcagTags: issue.wcagTags,
+			nodes: issue.nodes.map((node) => ({
+				selector: node.selector,
+				html: node.html,
+				failureSummary: node.failureSummary
+			}))
+		}))
+	};
+	return JSON.stringify(exportData, null, 2);
+}
+/**
+* Export audit results to CSV format
+*/
+function exportToCsv(result, _options = {}) {
+	const headers = [
+		"Rule ID",
+		"Impact",
+		"Message",
+		"Help URL",
+		"WCAG Tags",
+		"Selector",
+		"HTML"
+	];
+	const rows = [];
+	for (const issue of result.issues) for (const node of issue.nodes) rows.push([
+		issue.ruleId,
+		issue.impact,
+		issue.message.replace(/"/g, "\"\""),
+		issue.helpUrl,
+		issue.wcagTags.join("; "),
+		node.selector,
+		node.html.replace(/"/g, "\"\"")
+	]);
+	return [headers.map((h) => `"${h}"`).join(","), ...rows.map((row) => row.map((cell) => `"${cell}"`).join(","))].join("\n");
+}
+/**
+* Download a file with the given content
+*/
+function downloadFile(content, filename, mimeType) {
+	const blob = new Blob([content], { type: mimeType });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	document.body.removeChild(link);
+	URL.revokeObjectURL(url);
+}
+/**
+* Export audit results and trigger download
+*/
+function exportAuditResults(result, options) {
+	const { format, filename } = options;
+	const defaultFilename = `a11y-audit-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}`;
+	if (format === "json") downloadFile(exportToJson(result, options), `${filename || defaultFilename}.json`, "application/json");
+	else if (format === "csv") downloadFile(exportToCsv(result, options), `${filename || defaultFilename}.csv`, "text/csv");
+}
+//#endregion
+export { exportAuditResults };
+
+//# sourceMappingURL=export-audit.uitls.js.map

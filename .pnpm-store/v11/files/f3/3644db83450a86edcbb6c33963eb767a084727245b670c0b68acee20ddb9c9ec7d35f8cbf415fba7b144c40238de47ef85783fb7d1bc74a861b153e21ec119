@@ -1,0 +1,9 @@
+export declare const A11yDevtoolsCore: new () => {
+    "__#private@#isMounted": boolean;
+    "__#private@#isMounting": boolean;
+    "__#private@#abortMount": boolean;
+    "__#private@#dispose"?: () => void;
+    mount<T extends HTMLElement>(el: T, props: import('@tanstack/devtools').TanStackDevtoolsPluginProps): Promise<void>;
+    unmount(): void;
+};
+export type { A11yDevtoolsInit } from './core.js';

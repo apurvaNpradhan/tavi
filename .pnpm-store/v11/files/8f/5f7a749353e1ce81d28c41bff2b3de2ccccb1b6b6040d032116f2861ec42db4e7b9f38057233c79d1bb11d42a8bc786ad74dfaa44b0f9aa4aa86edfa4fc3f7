@@ -1,0 +1,273 @@
+import { EventStreamDecoderStream, withEventMeta, ErrorEvent, encodeEventStreamMessage, unwrapEvent, getEventMeta, generateContentDisposition, resolveStandardBodyHint, getFilenameFromContentDisposition } from '@standard-server/core';
+import { AsyncIteratorClass, parseEmptyableJSON, isTypescriptObject, stringifyJSON, AbortError, isAsyncIteratorObject } from '@standard-server/shared';
+
+function toAsyncIteratorObject(stream) {
+  const eventStream = stream?.pipeThrough(new TextDecoderStream()).pipeThrough(new EventStreamDecoderStream());
+  const reader = eventStream?.getReader();
+  let isCancelled = false;
+  return new AsyncIteratorClass(async () => {
+    while (true) {
+      if (reader === void 0) {
+        return { done: true, value: void 0 };
+      }
+      const { done, value } = await reader.read();
+      if (done) {
+        if (isCancelled) {
+          throw new AbortError("Stream was cancelled");
+        }
+        return { done: true, value: void 0 };
+      }
+      switch (value.event) {
+        case "message": {
+          let message = parseEmptyableJSON(value.data);
+          if (isTypescriptObject(message)) {
+            message = withEventMeta(message, value);
+          }
+          return { done: false, value: message };
+        }
+        case "error": {
+          let error = new ErrorEvent(parseEmptyableJSON(value.data));
+          error = withEventMeta(error, value);
+          throw error;
+        }
+        case "close": {
+          let close = parseEmptyableJSON(value.data);
+          if (isTypescriptObject(close)) {
+            close = withEventMeta(close, value);
+          }
+          return { done: true, value: close };
+        }
+      }
+    }
+  }, async (state) => {
+    if (state.kind === "cancelled") {
+      isCancelled = true;
+    }
+    await reader?.cancel();
+  });
+}
+function toEventStream(iterator, options = {}) {
+  const keepAliveEnabled = options.keepAlive?.enabled ?? true;
+  const keepAliveInterval = options.keepAlive?.interval ?? 15e3;
+  const keepAliveComment = options.keepAlive?.comment ?? "";
+  const initialCommentEnabled = options.initialComment?.enabled ?? true;
+  const initialComment = options.initialComment?.comment ?? "";
+  const emptyCloseEventEnabled = options.emptyCloseEventEnabled ?? true;
+  let cancelled = false;
+  let timeout;
+  const stream = new ReadableStream({
+    start(controller) {
+      if (initialCommentEnabled) {
+        controller.enqueue(encodeEventStreamMessage({
+          comments: [initialComment]
+        }));
+      }
+    },
+    async pull(controller) {
+      try {
+        if (keepAliveEnabled) {
+          timeout = setInterval(() => {
+            controller.enqueue(encodeEventStreamMessage({
+              comments: [keepAliveComment]
+            }));
+          }, keepAliveInterval);
+        }
+        const result = await iterator.next();
+        clearInterval(timeout);
+        if (cancelled) {
+          return;
+        }
+        const [data, meta] = unwrapEvent(result.value);
+        if (!result.done || data !== void 0 || meta !== void 0 || emptyCloseEventEnabled) {
+          const event = result.done ? "close" : "message";
+          controller.enqueue(encodeEventStreamMessage({
+            ...meta,
+            event,
+            data: stringifyJSON(data)
+          }));
+        }
+        if (result.done) {
+          controller.close();
+        }
+      } catch (err) {
+        clearInterval(timeout);
+        if (cancelled) {
+          return;
+        }
+        if (err instanceof ErrorEvent) {
+          controller.enqueue(encodeEventStreamMessage({
+            ...getEventMeta(err),
+            event: "error",
+            data: stringifyJSON(err.data)
+          }));
+          controller.close();
+        } else {
+          controller.error(err);
+        }
+      }
+    },
+    async cancel() {
+      cancelled = true;
+      clearInterval(timeout);
+      await iterator.return?.();
+    }
+  }).pipeThrough(new TextEncoderStream());
+  return stream;
+}
+
+async function toStandardBody(re, options) {
+  const hint = options?.hint ?? resolveStandardBodyHint({
+    "standard-server": re.headers.get("standard-server") ?? void 0,
+    "content-type": re.headers.get("content-type") ?? void 0,
+    "content-length": re.headers.get("content-length") ?? void 0,
+    "content-disposition": re.headers.get("content-disposition") ?? void 0
+  });
+  if (hint === "none") {
+    return void 0;
+  }
+  if (re.bodyUsed) {
+    throw new TypeError("Failed to read body: body stream already read");
+  }
+  if (hint === "json") {
+    const text = await re.text();
+    return parseEmptyableJSON(text);
+  }
+  if (hint === "form-data") {
+    return await re.formData();
+  }
+  if (hint === "url-search-params") {
+    const text = await re.text();
+    return new URLSearchParams(text);
+  }
+  if (hint === "event-stream") {
+    return toAsyncIteratorObject(re.body);
+  }
+  if (hint === "file") {
+    const contentDisposition = re.headers.get("content-disposition");
+    const fileName = contentDisposition !== null ? getFilenameFromContentDisposition(contentDisposition) : void 0;
+    const blob = await re.blob();
+    return new File([blob], fileName ?? "blob", {
+      type: blob.type
+    });
+  }
+  return re.body ?? new ReadableStream({
+    start(controller) {
+      controller.close();
+    }
+  });
+}
+function toFetchBody(body, headers, options = {}) {
+  headers = { ...headers };
+  if (body instanceof ReadableStream) {
+    headers["standard-server"] ??= "octet-stream";
+    headers["content-type"] ??= "application/octet-stream";
+    return [body, headers];
+  }
+  if (body instanceof Blob) {
+    headers["standard-server"] ??= "file";
+    headers["content-type"] = body.type;
+    headers["content-disposition"] ??= generateContentDisposition(body instanceof File ? body.name ?? "" : "blob");
+    if (Number.isFinite(body.size)) {
+      headers["content-length"] = body.size.toString();
+      return [body, headers];
+    }
+    return [body.stream(), headers];
+  }
+  headers["standard-server"] = void 0;
+  headers["content-length"] = void 0;
+  if (body === void 0) {
+    headers["content-type"] = void 0;
+    return [void 0, headers];
+  }
+  if (body instanceof FormData) {
+    headers["content-type"] = void 0;
+    return [body, headers];
+  }
+  if (body instanceof URLSearchParams) {
+    headers["content-type"] = void 0;
+    return [body, headers];
+  }
+  if (isAsyncIteratorObject(body)) {
+    headers["content-type"] = "text/event-stream";
+    return [toEventStream(body, options.eventStream), headers];
+  }
+  headers["content-type"] = "application/json";
+  return [stringifyJSON(body), headers];
+}
+
+function toStandardHeaders(headers) {
+  const standardHeaders = /* @__PURE__ */ Object.create(null);
+  headers.forEach((value, key) => {
+    if (Array.isArray(standardHeaders[key])) {
+      standardHeaders[key].push(value);
+    } else if (standardHeaders[key] !== void 0) {
+      standardHeaders[key] = [standardHeaders[key], value];
+    } else {
+      standardHeaders[key] = value;
+    }
+  });
+  return standardHeaders;
+}
+function toFetchHeaders(standardHeaders) {
+  const headers = new Headers();
+  for (const key of Object.keys(standardHeaders)) {
+    const value = standardHeaders[key];
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        headers.append(key, v);
+      }
+    } else if (value !== void 0) {
+      headers.append(key, value);
+    }
+  }
+  return headers;
+}
+
+function toStandardUrl(url) {
+  const pathname = `${url.pathname.startsWith("/") ? "" : "/"}${url.pathname}`;
+  return `${pathname}${url.search}${url.hash}`;
+}
+
+function toStandardLazyRequest(request) {
+  const url = new URL(request.url);
+  return {
+    url: toStandardUrl(url),
+    method: request.method,
+    get headers() {
+      const headers = toStandardHeaders(request.headers);
+      Object.defineProperty(this, "headers", { value: headers, writable: true });
+      return headers;
+    },
+    set headers(value) {
+      Object.defineProperty(this, "headers", { value, writable: true });
+    },
+    resolveBody: (hint) => toStandardBody(request, { hint }),
+    signal: request.signal
+  };
+}
+
+function toFetchResponse(standardResponse, options = {}) {
+  const [body, standardHeaders] = toFetchBody(standardResponse.body, standardResponse.headers, options);
+  const response = new Response(body, {
+    headers: toFetchHeaders(standardHeaders),
+    status: standardResponse.status
+  });
+  void response.body;
+  return response;
+}
+function toStandardLazyResponse(response) {
+  return {
+    resolveBody: (hint) => toStandardBody(response, { hint }),
+    status: response.status,
+    get headers() {
+      const headers = toStandardHeaders(response.headers);
+      Object.defineProperty(this, "headers", { value: headers, writable: true });
+      return headers;
+    },
+    set headers(value) {
+      Object.defineProperty(this, "headers", { value, writable: true });
+    }
+  };
+}
+
+export { toAsyncIteratorObject, toEventStream, toFetchBody, toFetchHeaders, toFetchResponse, toStandardBody, toStandardHeaders, toStandardLazyRequest, toStandardLazyResponse, toStandardUrl };

@@ -1,0 +1,47 @@
+import { TanStackDevtoolsTheme } from '@tanstack/devtools-ui';
+import { SeverityThreshold } from '../types/types.js';
+export declare function getSeverityStyle(impact: SeverityThreshold, theme: TanStackDevtoolsTheme): {
+    colors: {
+        readonly subtleFill: string;
+        readonly border: string;
+        readonly text: string;
+        readonly solidFill: string;
+        readonly onFill: string;
+    };
+    role: "error";
+    label: "Critical";
+    outline: "3px solid";
+} | {
+    colors: {
+        readonly subtleFill: string;
+        readonly border: string;
+        readonly text: string;
+        readonly solidFill: string;
+        readonly onFill: string;
+    };
+    role: "error";
+    label: "Serious";
+    outline: "2px solid";
+} | {
+    colors: {
+        readonly subtleFill: string;
+        readonly border: string;
+        readonly text: string;
+        readonly solidFill: string;
+        readonly onFill: string;
+    };
+    role: "warning";
+    label: "Moderate";
+    outline: "2px solid";
+} | {
+    colors: {
+        readonly subtleFill: string;
+        readonly border: string;
+        readonly text: string;
+        readonly solidFill: string;
+        readonly onFill: string;
+    };
+    role: "info";
+    label: "Minor";
+    outline: "2px dashed";
+};

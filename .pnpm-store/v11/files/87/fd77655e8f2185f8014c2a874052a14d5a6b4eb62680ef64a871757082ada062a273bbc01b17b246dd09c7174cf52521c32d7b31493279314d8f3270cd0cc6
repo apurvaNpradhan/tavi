@@ -1,0 +1,169 @@
+import { sortPlugins, runWithSpan, ORPC_NAME, getTracer, isAsyncIteratorObject, override, traceAsyncIterator, traceReadableStream, intercept, value, pathToHttpPath, stringifyJSON } from '@orpc/shared';
+import { mergeStandardHeaders, parseStandardUrl } from '@standard-server/core';
+import { toStandardHeaders } from '@standard-server/fetch';
+import { R as RPCSerializer, c as createORPCErrorFromMalformedResponse, i as isORPCErrorJson, a as createORPCErrorFromJson } from './client.BYHnU_Z3.mjs';
+
+class CompositeStandardLinkPlugin {
+  name = "~composite";
+  plugins;
+  constructor(plugins = []) {
+    this.plugins = sortPlugins(plugins);
+  }
+  init(options) {
+    for (const plugin of this.plugins) {
+      if (plugin.init) {
+        options = plugin.init(options);
+      }
+    }
+    return options;
+  }
+}
+
+class StandardLink {
+  constructor(codec, transport, options = {}) {
+    this.codec = codec;
+    this.transport = transport;
+    options = new CompositeStandardLinkPlugin(options.plugins).init(options);
+    this.interceptors = options.interceptors;
+    this.transportInterceptors = options.transportInterceptors;
+  }
+  interceptors;
+  transportInterceptors;
+  /**
+   * @throws ORPCError, transport-level errors (network failures, timeouts, etc.)
+   */
+  call(path, input, options) {
+    return runWithSpan(`${ORPC_NAME}.${path.join("/")}`, (span) => {
+      span?.setAttribute("rpc.system", ORPC_NAME);
+      span?.setAttribute("rpc.method", path.join("."));
+      if (getTracer() && isAsyncIteratorObject(input)) {
+        input = override(input, traceAsyncIterator("consume_async_iterator_object_input", input));
+      } else if (getTracer() && input instanceof ReadableStream) {
+        input = override(input, traceReadableStream("consume_octet_stream_input", input));
+      }
+      return intercept(this.interceptors, { ...options, path, input }, async ({ path: path2, input: input2, ...options2 }) => {
+        const tracer = getTracer();
+        const activeSpan = tracer?.getActiveSpan() ?? span;
+        let request = await runWithSpan(
+          { name: "encode_input", parent: activeSpan },
+          () => this.codec.encodeInput(input2, path2, options2)
+        );
+        if (activeSpan && tracer?.inject) {
+          const headers = { ...request.headers };
+          tracer.inject(activeSpan, headers);
+          request = { ...request, headers };
+        }
+        const response = await intercept(
+          this.transportInterceptors,
+          { ...options2, path: path2, request },
+          ({ path: path3, request: request2, ...options3 }) => {
+            const activeTransportSpan = tracer?.getActiveSpan() ?? activeSpan;
+            return runWithSpan(
+              { name: "send_request", parent: activeTransportSpan },
+              () => this.transport.send(request2, path3, options3)
+            );
+          }
+        );
+        const decodedResult = await runWithSpan(
+          { name: "decode_response", parent: activeSpan },
+          () => this.codec.decodeResponse(response, path2, options2)
+        );
+        if (decodedResult.kind === "error") {
+          throw decodedResult.error;
+        }
+        const output = decodedResult.output;
+        if (getTracer() && isAsyncIteratorObject(output)) {
+          return override(output, traceAsyncIterator("consume_async_iterator_object_output", output));
+        } else if (getTracer() && output instanceof ReadableStream) {
+          return override(output, traceReadableStream("consume_octet_stream_output", output));
+        }
+        return output;
+      });
+    });
+  }
+}
+
+const END_SLASH_REGEX = /\/$/;
+class RPCLinkCodec {
+  baseUrl;
+  maxUrlLength;
+  fallbackMethod;
+  expectedMethod;
+  headers;
+  serializer;
+  constructor(options) {
+    this.baseUrl = options.url ?? "/";
+    this.maxUrlLength = options.maxUrlLength ?? 2083;
+    this.fallbackMethod = options.fallbackMethod ?? "POST";
+    this.expectedMethod = options.method ?? this.fallbackMethod;
+    this.headers = options.headers ?? {};
+    this.serializer = options.serializer ?? new RPCSerializer();
+  }
+  async encodeInput(input, path, options) {
+    let headers = toResolvedStandardHeaders(await value(this.headers, options, path, input));
+    if (options.lastEventId !== void 0) {
+      headers = mergeStandardHeaders(headers, { "last-event-id": options.lastEventId });
+    }
+    const expectedMethod = await value(this.expectedMethod, options, path, input);
+    const baseUrl = await value(this.baseUrl, options, path, input);
+    const [pathname, search, hash] = parseStandardUrl(baseUrl);
+    const newPathname = `${pathname.replace(END_SLASH_REGEX, "")}${pathToHttpPath(path)}`;
+    const serialized = this.serializer.serialize(input);
+    if (expectedMethod === "GET" && !(serialized instanceof Blob) && !(serialized instanceof ReadableStream) && !(serialized instanceof FormData) && !isAsyncIteratorObject(serialized)) {
+      const maxUrlLength = await value(this.maxUrlLength, options, path, input);
+      const mergedSearch = new URLSearchParams(search);
+      mergedSearch.append("data", stringifyJSON(serialized) ?? "");
+      const url2 = `${newPathname}?${mergedSearch}${hash ?? ""}`;
+      if (url2.length <= maxUrlLength) {
+        return {
+          body: void 0,
+          method: expectedMethod,
+          headers,
+          url: url2,
+          signal: options.signal
+        };
+      }
+    }
+    const url = `${newPathname}${search ?? ""}${hash ?? ""}`;
+    return {
+      url,
+      method: expectedMethod === "GET" ? this.fallbackMethod : expectedMethod,
+      headers,
+      body: serialized,
+      signal: options.signal
+    };
+  }
+  async decodeResponse(response) {
+    const isOk = response.status < 400;
+    const body = await response.resolveBody();
+    const deserialized = await (async () => {
+      try {
+        return this.serializer.deserialize(body);
+      } catch (cause) {
+        throw createORPCErrorFromMalformedResponse({
+          message: "Invalid RPC response format.",
+          response: { status: response.status, headers: response.headers, body },
+          cause
+        });
+      }
+    })();
+    if (!isOk) {
+      if (isORPCErrorJson(deserialized)) {
+        return { kind: "error", error: createORPCErrorFromJson(deserialized) };
+      }
+      return {
+        kind: "error",
+        error: createORPCErrorFromMalformedResponse({ response: { headers: response.headers, status: response.status, body } })
+      };
+    }
+    return { kind: "output", output: deserialized };
+  }
+}
+function toResolvedStandardHeaders(headers) {
+  if (typeof headers.forEach === "function") {
+    return toStandardHeaders(headers);
+  }
+  return headers;
+}
+
+export { CompositeStandardLinkPlugin as C, RPCLinkCodec as R, StandardLink as S };

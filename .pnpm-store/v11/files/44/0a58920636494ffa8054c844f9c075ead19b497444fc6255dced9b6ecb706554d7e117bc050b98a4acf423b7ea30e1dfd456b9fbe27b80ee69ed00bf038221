@@ -1,0 +1,22 @@
+import { AllyProvider } from "../contexts/allyContext.js";
+import { Shell } from "./Shell.js";
+import { createComponent } from "solid-js/web";
+import { ThemeContextProvider } from "@tanstack/devtools-ui";
+//#region src/core/components/index.tsx
+/** @jsxImportSource solid-js */
+function Devtools(props) {
+	return createComponent(ThemeContextProvider, {
+		get theme() {
+			return props.theme;
+		},
+		get children() {
+			return createComponent(AllyProvider, { get children() {
+				return createComponent(Shell, {});
+			} });
+		}
+	});
+}
+//#endregion
+export { Devtools as default };
+
+//# sourceMappingURL=index.js.map

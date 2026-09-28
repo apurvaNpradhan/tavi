@@ -1,0 +1,163 @@
+import { ClientContext, Client } from '@orpc/client';
+import { ErrorMap, AnyMetaPlugin, ORPCErrorConstructorMap, AnySchema, ProcedureContractDefinition, Meta, InferSchemaOutput, ORPCErrorFromErrorMap, InferSchemaInput } from '@orpc/contract';
+import { MaybeOptionalOptions, Promisable, Interceptor, PromiseWithError, ThrowableError, Value } from '@orpc/shared';
+
+interface Context {
+    [key: PropertyKey]: any;
+}
+type MergedInitialContext<TInitial extends Context, TOutContext extends Context, TInContext extends Context> = Exclude<keyof TInContext, keyof TInitial | keyof TOutContext> extends never ? TInitial : TInitial & Omit<TInContext, keyof TInitial | keyof TOutContext>;
+type MergedContext<TCurrent extends Context, TOutContext extends Context> = keyof TOutContext extends never ? TCurrent : Omit<TCurrent, keyof TOutContext> & TOutContext;
+
+type MiddlewareResult<TOutContext extends Context, TOutput> = Promisable<{
+    output: TOutput;
+    context: TOutContext;
+}>;
+type MiddlewareNextOptions<TOutContext extends Context> = object extends TOutContext ? {
+    context?: TOutContext;
+} : {
+    context: TOutContext;
+};
+interface MiddlewareNext<TOutput> {
+    <T extends Context = object>(...rest: MaybeOptionalOptions<MiddlewareNextOptions<T>>): MiddlewareResult<T, TOutput>;
+}
+type MiddlewareDoneOptions<TOutContext, TOutput> = (object extends TOutContext ? {
+    context?: TOutContext;
+} : {
+    context: TOutContext;
+}) & {
+    output: TOutput;
+};
+interface MiddlewareDone<TOutput> {
+    /**
+     * Create a successful result and terminate the middleware chain early.
+     */
+    <TOutContext extends Context = object>(...rest: MaybeOptionalOptions<MiddlewareDoneOptions<TOutContext, TOutput>>): MiddlewareResult<TOutContext, TOutput>;
+}
+interface MiddlewareOptions<TInContext extends Context, TOutput, TErrorConstructorMap extends ORPCErrorConstructorMap<any>> {
+    context: TInContext;
+    path: string[];
+    procedure: AnyProcedure;
+    signal?: AbortSignal | undefined;
+    lastEventId: string | undefined;
+    /**
+     * Invoke to continue the middleware chain.
+     */
+    next: MiddlewareNext<TOutput>;
+    errors: TErrorConstructorMap;
+}
+interface MiddlewareDefinition<TErrorMap extends ErrorMap> {
+    errorMap?: TErrorMap | undefined;
+    metaPlugins?: AnyMetaPlugin[] | undefined;
+}
+interface Middleware<TInContext extends Context, TOutContext extends Context, TInput, TOutput, TErrorMap extends ErrorMap> {
+    /** this property should be optional to support inline middleware */
+    '~orpc'?: MiddlewareDefinition<TErrorMap> | undefined;
+    (opts: MiddlewareOptions<TInContext, TOutput, ORPCErrorConstructorMap<TErrorMap>>, input: TInput, done: MiddlewareDone<TOutput>): Promisable<MiddlewareResult<TOutContext, TOutput>>;
+}
+type AnyMiddleware = Middleware<any, any, any, any, any>;
+
+interface ProcedureHandlerOptions<TCurrentContext extends Context, TInput, TErrorConstructorMap extends ORPCErrorConstructorMap<any>> {
+    context: TCurrentContext;
+    input: TInput;
+    path: string[];
+    procedure: Procedure<Context, Context, AnySchema, AnySchema, ErrorMap>;
+    signal?: AbortSignal | undefined;
+    lastEventId?: string | undefined;
+    errors: TErrorConstructorMap;
+}
+interface ProcedureHandler<TCurrentContext extends Context, TInput, THandlerOutput, TErrorConstructorMap extends ORPCErrorConstructorMap<any>> {
+    (opts: ProcedureHandlerOptions<TCurrentContext, TInput, TErrorConstructorMap>, input: TInput): Promisable<THandlerOutput>;
+}
+interface OrderedMiddleware {
+    /**
+     * Snapshot of `inputSchemas.length`
+     * at the time this middleware was used.
+     *
+     * @default 0
+     */
+    inputSchemasLengthAtUse?: number | undefined;
+    /**
+     * Snapshot of `outputSchemas.length`
+     * at the time this middleware was used.
+     *
+     * @default 0
+     */
+    outputSchemasLengthAtUse?: number | undefined;
+    middleware: AnyMiddleware;
+}
+interface ProcedureConfig {
+    /**
+     * When enabled, input schemas are not validated at runtime.
+     * Schemas are still used for type inference and OpenAPI generation.
+     *
+     * @remarks
+     * **Warning**: Do not disable validation for schemas that transform values.
+     *
+     * @default false
+     */
+    disableInputValidation?: boolean | undefined;
+    /**
+     * When enabled, output schemas are not validated at runtime.
+     * Schemas are still used for type inference and OpenAPI generation.
+     *
+     * Useful when output schemas exist only for specification generation.
+     *
+     * @remarks
+     * **Warning**: Do not disable validation for schemas that transform values.
+     *
+     * @default false
+     */
+    disableOutputValidation?: boolean | undefined;
+}
+interface ProcedureDefinition<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> extends ProcedureContractDefinition<TInputSchema, TOutputSchema, TErrorMap>, ProcedureConfig {
+    __TInitialContext?: (type: TInitialContext) => unknown;
+    __TInjectedContext?: (type: TInjectedContext) => unknown;
+    orderedMiddlewares: OrderedMiddleware[];
+    handler: ProcedureHandler<any, any, any, any>;
+}
+declare class Procedure<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    '~orpc': ProcedureDefinition<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap>;
+    constructor(def: ProcedureDefinition<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap>);
+    /**
+     * Checks if the given instance satisfies the {@link Procedure} class/interface.
+     */
+    static [Symbol.hasInstance](instance: unknown): boolean;
+}
+type AnyProcedure = Procedure<any, any, any, any, any>;
+
+interface LazyDefinition<T> {
+    meta: Meta;
+    metaPlugins?: AnyMetaPlugin[] | undefined;
+    loader: () => Promise<{
+        default: T;
+    }>;
+}
+declare class Lazy<T> {
+    '~orpc': LazyDefinition<T>;
+    constructor(def: LazyDefinition<T>);
+    /**
+     * Checks if the given instance satisfies the {@link Lazy} class/interface.
+     */
+    static [Symbol.hasInstance](instance: unknown): boolean;
+}
+type Lazyable<T> = T | Lazy<T>;
+declare function unlazy<T extends Lazyable<any>>(maybeLazy: T): Promise<{
+    default: T extends Lazy<infer U> ? U : T;
+}>;
+
+type ProcedureClient<TClientContext extends ClientContext, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> = Client<TClientContext, InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>, ORPCErrorFromErrorMap<TErrorMap> | ThrowableError>;
+interface ProcedureClientInterceptorOptions<TInitialContext extends Context, TErrorMap extends ErrorMap> extends ProcedureHandlerOptions<TInitialContext, unknown, ORPCErrorConstructorMap<TErrorMap>> {
+}
+type ProcedureClientInterceptor<TInitialContext extends Context, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> = Interceptor<ProcedureClientInterceptorOptions<TInitialContext, TErrorMap>, PromiseWithError<InferSchemaOutput<TOutputSchema>, ORPCErrorFromErrorMap<TErrorMap> | ThrowableError>>;
+type ProcedureClientOptions<TInitialContext extends Context, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap, TClientContext extends ClientContext> = {
+    path?: string[];
+    interceptors?: ProcedureClientInterceptor<TInitialContext, TOutputSchema, TErrorMap>[];
+} & (object extends TInitialContext ? {
+    context?: Value<Promisable<TInitialContext>, [clientContext: TClientContext]>;
+} : {
+    context: Value<Promisable<TInitialContext>, [clientContext: TClientContext]>;
+});
+declare function createProcedureClient<TInitialContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap, TClientContext extends ClientContext = object>(lazyableProcedure: Lazyable<Procedure<TInitialContext, any, TInputSchema, TOutputSchema, TErrorMap>>, ...rest: MaybeOptionalOptions<ProcedureClientOptions<TInitialContext, TOutputSchema, TErrorMap, TClientContext>>): ProcedureClient<TClientContext, TInputSchema, TOutputSchema, TErrorMap>;
+
+export { Procedure as a, Lazy as h, createProcedureClient as u, unlazy as v };
+export type { AnyProcedure as A, Context as C, Lazyable as L, MergedContext as M, OrderedMiddleware as O, ProcedureClientOptions as P, ProcedureClient as b, ProcedureClientInterceptor as c, Middleware as d, MergedInitialContext as e, ProcedureConfig as f, AnyMiddleware as g, ProcedureHandler as i, LazyDefinition as j, MiddlewareDefinition as k, MiddlewareDone as l, MiddlewareDoneOptions as m, MiddlewareNext as n, MiddlewareNextOptions as o, MiddlewareOptions as p, MiddlewareResult as q, ProcedureClientInterceptorOptions as r, ProcedureDefinition as s, ProcedureHandlerOptions as t };

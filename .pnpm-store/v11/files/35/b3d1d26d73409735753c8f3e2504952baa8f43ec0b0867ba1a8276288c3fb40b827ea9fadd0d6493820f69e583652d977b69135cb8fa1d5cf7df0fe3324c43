@@ -1,0 +1,34 @@
+import { FetchHandler } from '@orpc/server/fetch';
+import { StandardHandler } from '@orpc/server/standard';
+import { O as OpenAPIHandlerCodec } from '../../shared/openapi.wQKxWEI2.mjs';
+import { FetchLinkTransport } from '@orpc/client/fetch';
+import { StandardLink } from '@orpc/client/standard';
+import { O as OpenAPILinkCodec } from '../../shared/openapi.BdClbrwk.mjs';
+import '@orpc/client';
+import '@orpc/server';
+import '@orpc/shared';
+import '@standard-server/core';
+import '../../shared/openapi.B1LWf28E.mjs';
+import '../../shared/openapi.B2G-HeFn.mjs';
+import '../../shared/openapi.B9PQzqBn.mjs';
+import 'rou3';
+import '@orpc/contract';
+import '@standard-server/fetch';
+
+class OpenAPIHandler extends FetchHandler {
+  constructor(router, options = {}) {
+    const codec = new OpenAPIHandlerCodec(router, options);
+    const handler = new StandardHandler(codec, options);
+    super(handler, options);
+  }
+}
+
+class OpenAPILink extends StandardLink {
+  constructor(router, options = {}) {
+    const codec = new OpenAPILinkCodec(router, options);
+    const transport = new FetchLinkTransport(options);
+    super(codec, transport, options);
+  }
+}
+
+export { OpenAPIHandler, OpenAPILink };

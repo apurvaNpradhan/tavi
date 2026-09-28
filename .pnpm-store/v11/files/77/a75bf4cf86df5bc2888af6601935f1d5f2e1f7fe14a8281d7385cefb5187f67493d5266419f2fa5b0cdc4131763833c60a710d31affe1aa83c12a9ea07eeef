@@ -1,0 +1,2 @@
+export { A11yDevtoolsCore } from './core.js';
+export type { A11yDevtoolsInit } from './core.js';

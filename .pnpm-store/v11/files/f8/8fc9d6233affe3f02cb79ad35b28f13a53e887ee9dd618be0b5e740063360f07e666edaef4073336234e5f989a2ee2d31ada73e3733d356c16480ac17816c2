@@ -1,0 +1,5 @@
+import { DevtoolsPanelProps } from '@tanstack/devtools-utils/angular';
+export interface A11yDevtoolsAngularInit extends DevtoolsPanelProps {
+}
+declare const A11yDevtoolsPanel: () => (inputs: () => DevtoolsPanelProps, host: HTMLElement) => (() => void);
+export { A11yDevtoolsPanel };

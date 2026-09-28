@@ -1,0 +1,5 @@
+import { DevtoolsPanelProps } from '@tanstack/devtools-utils/solid';
+declare const A11yDevtoolsPanel: (props: DevtoolsPanelProps) => import("solid-js").JSX.Element;
+export interface A11yDevtoolsSolidInit extends DevtoolsPanelProps {
+}
+export { A11yDevtoolsPanel };

@@ -1,0 +1,345 @@
+import { wrapAsyncIteratorPreservingEventMeta, toORPCError, isORPCErrorJson, createORPCErrorFromJson } from '@orpc/client';
+import { isPlainObject, NullProtoObj, copyOnWrite, isAsyncIteratorObject } from '@orpc/shared';
+import { ErrorEvent } from '@standard-server/core';
+import { B as BracketNotationSerializer } from './openapi.B2G-HeFn.mjs';
+
+const DEFAULT_OPENAPI_METHOD = "POST";
+const DEFAULT_OPENAPI_SUCCESS_DESCRIPTION = "OK";
+const DEFAULT_OPENAPI_INPUT_STRUCTURE = "compact";
+const DEFAULT_OPENAPI_OUTPUT_STRUCTURE = "compact";
+
+const DEFAULT_OPEN_API_JSON_SERIALIZER_HANDLERS = {
+  undefined: {
+    condition(data) {
+      return data === void 0;
+    },
+    serialize() {
+      return null;
+    },
+    isTerminal: true
+  },
+  bigint: {
+    condition(data) {
+      return typeof data === "bigint";
+    },
+    serialize(data) {
+      return data.toString();
+    },
+    isTerminal: true
+  },
+  date: {
+    condition(data) {
+      return data instanceof Date;
+    },
+    serialize(data) {
+      if (Number.isNaN(data.getTime())) {
+        return null;
+      }
+      return data.toISOString();
+    },
+    isTerminal: true
+  },
+  nan: {
+    condition(data) {
+      return typeof data === "number" && Number.isNaN(data);
+    },
+    serialize() {
+      return null;
+    },
+    isTerminal: true
+  },
+  url: {
+    condition(data) {
+      return data instanceof URL;
+    },
+    serialize(data) {
+      return data.toString();
+    },
+    isTerminal: true
+  },
+  set: {
+    condition(data) {
+      return data instanceof Set;
+    },
+    serialize(data) {
+      return Array.from(data);
+    }
+  },
+  map: {
+    condition(data) {
+      return data instanceof Map;
+    },
+    serialize(data) {
+      return Array.from(data.entries());
+    }
+  }
+};
+class OpenAPIJsonSerializer {
+  inlineBuiltInHandlers;
+  handlerEntries;
+  omitUndefinedProperties;
+  constructor(options = {}) {
+    this.omitUndefinedProperties = options.omitUndefinedProperties !== false;
+    const customHandlers = options.handlers;
+    if (customHandlers === void 0) {
+      this.inlineBuiltInHandlers = true;
+      return;
+    }
+    let inlineBuiltInHandlers = true;
+    let handlerEntries = [];
+    for (const key of Object.keys(customHandlers)) {
+      const handler = customHandlers[key];
+      if (inlineBuiltInHandlers && key in DEFAULT_OPEN_API_JSON_SERIALIZER_HANDLERS) {
+        inlineBuiltInHandlers = false;
+        break;
+      }
+      if (handler !== void 0) {
+        handlerEntries.push(handler);
+      }
+    }
+    if (!inlineBuiltInHandlers) {
+      handlerEntries = [];
+      for (const handler of Object.values({ ...DEFAULT_OPEN_API_JSON_SERIALIZER_HANDLERS, ...customHandlers })) {
+        if (handler !== void 0) {
+          handlerEntries.push(handler);
+        }
+      }
+    }
+    this.inlineBuiltInHandlers = inlineBuiltInHandlers;
+    this.handlerEntries = handlerEntries;
+  }
+  serialize(data) {
+    const maps = [];
+    const blobs = [];
+    const json = this.serializeValue(data, [], maps, blobs);
+    return { json, maps, blobs };
+  }
+  /**
+   * `segments` is a shared mutable stack (push/pop while walking),
+   * so it must be copied before being stored in `maps`.
+   */
+  serializeValue(data, segments, maps, blobs) {
+    if (this.inlineBuiltInHandlers) {
+      switch (typeof data) {
+        case "string":
+        case "boolean":
+          return data;
+        case "number":
+          return Number.isNaN(data) ? null : data;
+        case "undefined":
+          return null;
+        case "bigint":
+          return data.toString();
+        case "object": {
+          if (data === null) {
+            return data;
+          }
+          if (data instanceof Date) {
+            return Number.isNaN(data.getTime()) ? null : data.toISOString();
+          }
+          if (data instanceof URL) {
+            return data.toString();
+          }
+          if (data instanceof Set) {
+            return this.serializeValue(Array.from(data), segments, maps, blobs);
+          }
+          if (data instanceof Map) {
+            return this.serializeValue(Array.from(data.entries()), segments, maps, blobs);
+          }
+        }
+      }
+    }
+    const handlerEntries = this.handlerEntries;
+    if (handlerEntries) {
+      for (let i = 0; i < handlerEntries.length; i++) {
+        const handler = handlerEntries[i];
+        if (handler.condition(data)) {
+          const serialized = handler.serialize(data);
+          if (handler.isTerminal) {
+            if (serialized instanceof Blob) {
+              maps.push(segments.slice());
+              blobs.push(serialized);
+            }
+            return serialized;
+          }
+          return this.serializeValue(serialized, segments, maps, blobs);
+        }
+      }
+    }
+    if (data instanceof Blob) {
+      maps.push(segments.slice());
+      blobs.push(data);
+      return data;
+    }
+    if (Array.isArray(data)) {
+      const json = [];
+      for (let i = 0; i < data.length; i++) {
+        segments.push(i);
+        json.push(this.serializeValue(data[i], segments, maps, blobs));
+        segments.pop();
+      }
+      return json;
+    }
+    if (isPlainObject(data)) {
+      const json = new NullProtoObj();
+      for (const k of Object.keys(data)) {
+        const v = data[k];
+        if (k === "toJSON" && typeof v === "function") {
+          continue;
+        }
+        if (v === void 0 && this.omitUndefinedProperties) {
+          continue;
+        }
+        segments.push(k);
+        json[k] = this.serializeValue(v, segments, maps, blobs);
+        segments.pop();
+      }
+      return json;
+    }
+    return data;
+  }
+  deserialize(serialized) {
+    const ref = { json: serialized.json };
+    if (serialized.blobs?.length) {
+      for (let i = 0; i < serialized.maps.length; i++) {
+        const blob = serialized.blobs[i];
+        if (!(blob instanceof Blob)) {
+          throw new TypeError(`Invalid OpenAPI serialized data: blob ${i} is not a Blob.`);
+        }
+        const segments = serialized.maps[i];
+        let original = serialized;
+        let currentRef = ref;
+        let preSegment = "json";
+        for (let j = 0; j < segments.length; j++) {
+          original = original[preSegment];
+          currentRef = copyOnWrite(currentRef, preSegment, original);
+          preSegment = segments[j];
+          if (!Object.hasOwn(currentRef, preSegment)) {
+            throw new TypeError(`Invalid OpenAPI serialized data: segment "${preSegment}" does not exist.`);
+          }
+        }
+        currentRef[preSegment] = blob;
+      }
+    }
+    return ref.json;
+  }
+}
+
+class OpenAPISerializer {
+  jsonSerializer;
+  bracketNotation;
+  defaultSerializeOptions;
+  constructor({ bracketNotation, serialize, ...options } = {}) {
+    this.jsonSerializer = new OpenAPIJsonSerializer(options);
+    this.bracketNotation = new BracketNotationSerializer(bracketNotation);
+    this.defaultSerializeOptions = serialize;
+  }
+  serialize(data, options = {}) {
+    if (!options.asFormData) {
+      if (data === void 0 || data instanceof ReadableStream || data instanceof Blob) {
+        return data;
+      }
+      if (isAsyncIteratorObject(data)) {
+        return wrapAsyncIteratorPreservingEventMeta(data, {
+          mapResult: (result) => {
+            if (result.value === void 0) {
+              return result;
+            }
+            return { done: result.done, value: this.serializeValue(result.value, false, false) };
+          },
+          mapError: (e) => new ErrorEvent(
+            this.serializeValue(toORPCError(e).toJSON(), false, false),
+            { cause: e }
+          )
+        });
+      }
+    }
+    const useFormDataForBlobFields = options.useFormDataForBlobFields ?? this.defaultSerializeOptions?.useFormDataForBlobFields ?? true;
+    const asFormData = options.asFormData ?? this.defaultSerializeOptions?.asFormData ?? false;
+    return this.serializeValue(data, useFormDataForBlobFields, asFormData);
+  }
+  serializeValue(value, useFormDataForBlobFields, asFormData) {
+    const { json, blobs } = this.jsonSerializer.serialize(value);
+    if (!asFormData && (json instanceof Blob || json === void 0 || !blobs?.length || !useFormDataForBlobFields)) {
+      return json;
+    }
+    const form = new FormData();
+    for (const [path, value2] of this.bracketNotation.serialize(json)) {
+      if (value2 instanceof Blob) {
+        form.append(path, value2);
+      } else if (value2 !== void 0 && value2 !== null) {
+        form.append(path, String(value2));
+      }
+    }
+    return form;
+  }
+  deserialize(data) {
+    if (data === void 0 || data instanceof ReadableStream || data instanceof Blob) {
+      return data;
+    }
+    if (isAsyncIteratorObject(data)) {
+      return wrapAsyncIteratorPreservingEventMeta(data, {
+        mapResult: (result) => {
+          if (result.value === void 0) {
+            return result;
+          }
+          return { done: result.done, value: this.jsonSerializer.deserialize({ json: result.value }) };
+        },
+        mapError: (e) => {
+          if (e instanceof ErrorEvent) {
+            const deserialized = this.jsonSerializer.deserialize({ json: e.data });
+            if (isORPCErrorJson(deserialized)) {
+              return createORPCErrorFromJson(deserialized, { cause: e });
+            }
+          }
+          return e;
+        }
+      });
+    }
+    if (data instanceof URLSearchParams || data instanceof FormData) {
+      data = this.bracketNotation.deserialize(Array.from(data.entries()));
+    }
+    return this.jsonSerializer.deserialize({ json: data });
+  }
+}
+
+function isBodylessMethod(method) {
+  return method === "GET" || method === "HEAD";
+}
+const PARAMETER_NAME_REGEX = /^[\w-]+$/;
+function getDynamicPathParams(path) {
+  if (!path.includes("{")) {
+    return void 0;
+  }
+  const len = path.length;
+  let params;
+  let index = 1;
+  while (index < len) {
+    const segmentStart = index;
+    const slashPos = path.indexOf("/", index);
+    const segmentEnd = slashPos === -1 ? len : slashPos;
+    if (segmentEnd > segmentStart && path.charCodeAt(segmentStart) === 123 && path.charCodeAt(segmentEnd - 1) === 125) {
+      let parameterStart = segmentStart + 1;
+      let allowsSlash = false;
+      const operator = path.charCodeAt(parameterStart);
+      if (operator === 43) {
+        allowsSlash = true;
+        parameterStart++;
+      }
+      const parameterName = path.slice(parameterStart, segmentEnd - 1);
+      if (PARAMETER_NAME_REGEX.test(parameterName)) {
+        params ??= [];
+        params.push({
+          segment: path.slice(segmentStart, segmentEnd),
+          startIndex: segmentStart,
+          parameterName,
+          allowsSlash
+        });
+      }
+    }
+    index = segmentEnd + 1;
+  }
+  return params;
+}
+
+export { DEFAULT_OPENAPI_METHOD as D, OpenAPISerializer as O, DEFAULT_OPENAPI_INPUT_STRUCTURE as a, DEFAULT_OPENAPI_OUTPUT_STRUCTURE as b, DEFAULT_OPENAPI_SUCCESS_DESCRIPTION as c, OpenAPIJsonSerializer as d, getDynamicPathParams as g, isBodylessMethod as i };

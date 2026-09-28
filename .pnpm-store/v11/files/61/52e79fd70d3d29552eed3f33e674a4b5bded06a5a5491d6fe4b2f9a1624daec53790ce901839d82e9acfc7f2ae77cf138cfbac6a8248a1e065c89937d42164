@@ -1,0 +1,41 @@
+import { resolveMetaPlugins, mergeErrorMap, getHiddenMetaPlugins } from '@orpc/contract';
+import { P as Procedure } from './server.Djb_ebJT.mjs';
+
+class DecoratedProcedure extends Procedure {
+  meta(...plugins) {
+    const [meta, metaPlugins] = resolveMetaPlugins(this["~orpc"].meta, this["~orpc"].metaPlugins, plugins);
+    return new DecoratedProcedure({
+      ...this["~orpc"],
+      meta,
+      metaPlugins
+    });
+  }
+  errors(errors) {
+    let procedure = new DecoratedProcedure({
+      ...this["~orpc"],
+      errorMap: mergeErrorMap(this["~orpc"].errorMap, errors)
+    });
+    const plugins = getHiddenMetaPlugins(errors);
+    if (plugins) {
+      procedure = procedure.meta(...plugins);
+    }
+    return procedure;
+  }
+  use(middleware) {
+    let procedure = new DecoratedProcedure({
+      ...this["~orpc"],
+      errorMap: mergeErrorMap(middleware["~orpc"]?.errorMap, this["~orpc"].errorMap),
+      orderedMiddlewares: [...this["~orpc"].orderedMiddlewares, {
+        middleware,
+        inputSchemasLengthAtUse: this["~orpc"].inputSchemas?.length,
+        outputSchemasLengthAtUse: this["~orpc"].outputSchemas?.length
+      }]
+    });
+    if (middleware["~orpc"]?.metaPlugins) {
+      procedure = procedure.meta(...middleware["~orpc"]?.metaPlugins);
+    }
+    return procedure;
+  }
+}
+
+export { DecoratedProcedure as D };

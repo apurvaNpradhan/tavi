@@ -1,0 +1,85 @@
+import { AnyORPCError } from '@orpc/client';
+import { AnyProcedure, AnyRouter, Context } from '@orpc/server';
+import { StandardHandlerCodec, ResolvedStandardHandlerHandleOptions, StandardHandlerCodecResolvedProcedure } from '@orpc/server/standard';
+import { Value, Public, Promisable } from '@orpc/shared';
+import { StandardLazyRequest, StandardResponse } from '@standard-server/core';
+import { AnyProcedureContract } from '@orpc/contract';
+import { O as OpenAPISerializer } from './openapi.Dl3gew1x.mjs';
+
+interface OpenAPIMatcherOptions {
+    /**
+     * Filter which procedures are exposed for matching. Return `false` to exclude.
+     *
+     * @default true
+     */
+    filter?: Value<boolean, [contract: AnyProcedureContract | AnyProcedure, path: string[]]>;
+}
+declare class OpenAPIMatcher {
+    private readonly filter;
+    private readonly rootRouter;
+    private readonly tree;
+    private readonly pendingLazyRouters;
+    constructor(router: AnyRouter, options?: OpenAPIMatcherOptions);
+    private index;
+    match(method: string, pathname: `/${string}`, prefix: `/${string}` | undefined): Promise<{
+        path: string[];
+        procedure: AnyProcedure;
+        params?: Record<string, string> | undefined;
+    } | undefined>;
+    private resolvePendingLazyRouters;
+    private loadPendingLazyRouters;
+    private loadPendingLazyRouter;
+    private indexPendingLazyRouter;
+    private resolveProcedure;
+}
+
+interface OpenAPIHandlerCodecCoreOptions<_T extends Context> {
+    /**
+     * Override the default OpenAPI serializer.
+     */
+    serializer?: Public<OpenAPISerializer>;
+    /**
+     * Mapping ORPCError Code -> HTTP Status Code
+     * The status code should be in the `4xx` or `5xx` range (must be greater than or equal to `400`).
+     *
+     * @default COMMON_ERROR_STATUS_MAP
+     */
+    errorStatusMap?: Record<string, number> | undefined;
+    /**
+     * Customize how an ORPC error is serialized into a response body.
+     * Use this if your API needs a different error output structure.
+     *
+     * @remarks
+     * - Return `null | undefined` to fallback to default behavior
+     *
+     * @default ((e) => e.toJSON())
+     */
+    customErrorResponseBodyEncoder?: (error: AnyORPCError) => unknown;
+}
+declare class OpenAPIHandlerCodecCore<T extends Context> {
+    private readonly serializer;
+    private readonly errorStatusMap;
+    private readonly customErrorResponseBodySerializer;
+    constructor(options?: OpenAPIHandlerCodecCoreOptions<T>);
+    decodeInput(matched: {
+        procedure: AnyProcedure;
+        params?: undefined | Record<string, string>;
+    }, request: StandardLazyRequest): Promise<unknown>;
+    /**
+     * @throws {TypeError} If `outputStructure` is "detailed" and the output doesn't match the expected structure.
+     */
+    encodeOutput(output: unknown, procedure: AnyProcedure, path: string[]): Promisable<StandardResponse>;
+    encodeError(error: AnyORPCError): Promisable<StandardResponse>;
+    private deserializeQuery;
+    private deserializeParams;
+}
+interface OpenAPIHandlerCodecOptions<T extends Context> extends OpenAPIHandlerCodecCoreOptions<T>, OpenAPIMatcherOptions {
+}
+declare class OpenAPIHandlerCodec<T extends Context> extends OpenAPIHandlerCodecCore<T> implements StandardHandlerCodec<T> {
+    private readonly matcher;
+    constructor(router: AnyRouter, options?: OpenAPIHandlerCodecOptions<T>);
+    resolveProcedure(request: StandardLazyRequest, options: ResolvedStandardHandlerHandleOptions<T>): Promise<StandardHandlerCodecResolvedProcedure | undefined>;
+}
+
+export { OpenAPIHandlerCodec as a, OpenAPIHandlerCodecCore as b, OpenAPIMatcher as d };
+export type { OpenAPIHandlerCodecOptions as O, OpenAPIHandlerCodecCoreOptions as c, OpenAPIMatcherOptions as e };

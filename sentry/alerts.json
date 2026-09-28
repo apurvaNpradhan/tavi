@@ -1,0 +1,147 @@
+{
+  "version": 2,
+  "organization": "tavi",
+  "region": "us",
+  "api_base": "https://us.sentry.io/api/0",
+  "_comment_organization": "Set this to your Sentry organization slug, or override it per run with SENTRY_ORG. It is not the display name.",
+  "_comment_region": "The migration point between Sentry regions. A US account uses https://us.sentry.io/api/0; an EU account uses https://de.sentry.io/api/0. SENTRY_API_BASE overrides it for one run.",
+  "_comment_projects": "Project slugs must match the projects the DSNs report to. The API sends to SENTRY_DSN / VITE_SENTRY_DSN; create both projects before applying this file, or the rules will reference projects that do not exist.",
+  "_comment_actions": "Actions are deliberately empty. After the script applies this file, pick a notification target per rule in the Sentry UI (Settings > Alerts).",
+  "_comment_condition_result": "The Sentry API requires `conditionResult` on every condition. For issue alerts it is a boolean (true fires). For metric alerts it maps to issue priority: 75 = high, 50 = low, 0 = resolved.",
+  "_comment_event_types": "dataSources need `eventTypes`. Errors use [\"default\", \"error\"]. Transactions use [\"trace_item_span\"].",
+  "_comment_condition_group": "Detectors need a top-level `conditionGroup` defining the threshold (gt/lte/anomaly_detection).",
+  "_comment_dataset": "Sentry is migrating transaction-based alerts away from `dataset: transactions`. Transaction metrics use `dataset: events_analytics_platform` with `is_transaction:true` in the query.",
+  "_comment_cron": "There is no scheduled-job alert here because the template ships no scheduled jobs. When you add one that calls Sentry.captureCheckIn with a stable slug, add an alert of kind `metric` with a `detector_slugs` array instead of a `detector` block — the provisioning script resolves each slug to a monitor id via GET /organizations/{org}/monitors/ and fails loudly if a monitor does not exist yet.",
+  "alerts": [
+    {
+      "name": "API: New issue",
+      "description": "First time a new issue is seen in the API project. Triages everything that is not yet bucketed.",
+      "kind": "issue",
+      "projects": ["tavi-api"],
+      "workflow": {
+        "name": "API: New issue",
+        "enabled": true,
+        "triggers": {
+          "logicType": "any-short",
+          "conditions": [
+            {
+              "type": "first_seen_event",
+              "comparison": true,
+              "conditionResult": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "API: Error spike",
+      "description": "More than 50 error events in 5 minutes. The detector is created alongside this workflow.",
+      "kind": "metric",
+      "project": "tavi-api",
+      "detector": {
+        "name": "API: Error spike detector",
+        "description": "count(error events) > 50 in a 5-minute window",
+        "type": "metric_issue",
+        "config": {
+          "detectionType": "static"
+        },
+        "dataSources": [
+          {
+            "dataset": "events",
+            "query": "event.type:error",
+            "queryType": 0,
+            "aggregate": "count()",
+            "timeWindow": 300,
+            "environment": "production",
+            "eventTypes": ["default", "error"]
+          }
+        ],
+        "conditionGroup": {
+          "logicType": "any",
+          "conditions": [
+            {
+              "type": "gt",
+              "comparison": 50,
+              "conditionResult": 75
+            },
+            {
+              "type": "lte",
+              "comparison": 50,
+              "conditionResult": 0
+            }
+          ],
+          "actions": []
+        }
+      },
+      "workflow": {
+        "name": "API: Error spike",
+        "enabled": true
+      }
+    },
+    {
+      "name": "API: Slow p95 latency",
+      "description": "p95 of transaction.duration > 1500ms in any 10-minute window on /api/* routes.",
+      "kind": "metric",
+      "project": "tavi-api",
+      "detector": {
+        "name": "API: Slow p95 latency detector",
+        "description": "p95(transaction.duration) > 1500ms over 10 minutes",
+        "type": "metric_issue",
+        "config": {
+          "detectionType": "static"
+        },
+        "dataSources": [
+          {
+            "dataset": "events_analytics_platform",
+            "query": "transaction.duration:>0 transaction:*/api/* is_transaction:true",
+            "queryType": 1,
+            "aggregate": "p95(transaction.duration)",
+            "timeWindow": 600,
+            "environment": "production",
+            "eventTypes": ["trace_item_span"]
+          }
+        ],
+        "conditionGroup": {
+          "logicType": "any",
+          "conditions": [
+            {
+              "type": "gt",
+              "comparison": 1500,
+              "conditionResult": 50
+            },
+            {
+              "type": "lte",
+              "comparison": 1500,
+              "conditionResult": 0
+            }
+          ],
+          "actions": []
+        }
+      },
+      "workflow": {
+        "name": "API: Slow p95 latency",
+        "enabled": true
+      }
+    },
+    {
+      "name": "Web: New issue",
+      "description": "A new unhandled exception, or one caught by the router's error component, in the web project.",
+      "kind": "issue",
+      "projects": ["tavi-web"],
+      "workflow": {
+        "name": "Web: New issue",
+        "enabled": true,
+        "triggers": {
+          "logicType": "any-short",
+          "conditions": [
+            {
+              "type": "first_seen_event",
+              "comparison": true,
+              "conditionResult": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

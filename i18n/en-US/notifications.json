@@ -1,0 +1,20 @@
+{
+  "eyebrow": "Inbox",
+  "title": "Notifications",
+  "caughtUp": "You’re all caught up.",
+  "unreadCount": "{{count}} unread",
+  "clearAll": "Clear all",
+  "loading": "Loading notifications",
+  "loadFailedTitle": "Notifications couldn’t be loaded",
+  "loadFailedDescription": "Check your connection and try again.",
+  "retry": "Try again",
+  "emptyTitle": "No notifications yet",
+  "emptyDescription": "Workspace updates will show up here.",
+  "unreadLabel": "Unread: {{title}}",
+  "invitationAccepted": "Invitation accepted",
+  "unknownNotification": "Notification",
+  "markRead": "Mark {{title}} as read",
+  "markReadAction": "Mark read",
+  "markReadFailed": "Could not mark the notification as read.",
+  "clearFailed": "Could not clear notifications."
+}

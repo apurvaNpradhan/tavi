@@ -1,0 +1,23 @@
+import NoOp from "./NoOp.js";
+//#region src/svelte/plugin.ts
+function createSveltePlugin({ Component, ...config }) {
+	function Plugin(props) {
+		return {
+			...config,
+			component: Component,
+			props
+		};
+	}
+	function NoOpPlugin(props) {
+		return {
+			...config,
+			component: NoOp,
+			props
+		};
+	}
+	return [Plugin, NoOpPlugin];
+}
+//#endregion
+export { createSveltePlugin };
+
+//# sourceMappingURL=plugin.js.map

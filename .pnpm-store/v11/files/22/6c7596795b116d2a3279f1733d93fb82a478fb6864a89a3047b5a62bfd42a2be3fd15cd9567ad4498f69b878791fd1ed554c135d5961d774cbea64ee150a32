@@ -1,0 +1,18 @@
+import { render, createComponent, Portal, insert, template } from 'solid-js/web';
+import { lazy } from 'solid-js';
+
+// src/solid/class-mount-impl.tsx
+var _tmpl$ = /* @__PURE__ */ template(`<div style=height:100%>`);
+function __mountComponent(el, props, importFn) {
+  const Component = lazy(importFn);
+  return render(() => createComponent(Portal, {
+    mount: el,
+    get children() {
+      var _el$ = _tmpl$();
+      insert(_el$, createComponent(Component, props));
+      return _el$;
+    }
+  }), el);
+}
+
+export { __mountComponent };

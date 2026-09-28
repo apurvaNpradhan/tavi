@@ -1,0 +1,473 @@
+import { ClientContext, Client, AnyNestedClient, InferClientContext, InferClientError } from '@orpc/client';
+import { RouterContract, RouterContractClient, ContractClientFactory, AnySchema, ErrorMap, MetaPlugin, Meta, InferSchemaInput, InferSchemaOutput, ORPCErrorFromErrorMap } from '@orpc/contract';
+import { JsonifiedClient } from '@orpc/openapi';
+import { Promisable, PartialDeep, Interceptor, PromiseWithError, MaybeOptionalOptions, OrderablePlugin, Public, ThrowableError } from '@orpc/shared';
+import { QueryKey, QueryFunctionContext, QueryFunction, SkipToken, QueryObserverOptions, InfiniteQueryObserverOptions, MutationObserverOptions, DataTag, InfiniteData, MutationFunctionContext } from '@tanstack/query-core';
+
+interface SerializableStreamedQueryOptions {
+    /**
+     * Determines how data is handled when the query is fetched again
+     *
+     * - `'reset'`: Clears existing data and returns the query to a pending state.
+     * - `'append'`: Adds new streamed chunks to the existing data.
+     * - `'replace'`: Buffers streamed data and replaces the cache after the stream completes.
+     *
+     * @default 'reset'
+     */
+    refetchMode?: 'append' | 'reset' | 'replace';
+    /**
+     * Limits the number of data chunks stored in the query result.
+     * Older chunks are removed when the limit is reached.
+     *
+     * @default Number.POSITIVE_INFINITY (unlimited)
+     */
+    maxChunks?: number;
+}
+/**
+ * A variant of `streamedQuery` where:
+ * - Options are serializable
+ * - The output is predictable
+ */
+declare function serializableStreamedQuery<TQueryFnData = unknown, TQueryKey extends QueryKey = QueryKey>(queryFn: (context: QueryFunctionContext<TQueryKey>) => Promisable<AsyncIterable<TQueryFnData>>, { refetchMode, maxChunks }?: SerializableStreamedQueryOptions): QueryFunction<TQueryFnData[], TQueryKey>;
+
+type InferStreamedQueryOutput<TOutput> = TOutput extends AsyncIterable<infer U> ? U[] : never;
+type InferLiveQueryOutput<TOutput> = TOutput extends AsyncIterable<infer U> ? U : never;
+type OperationType = 'query' | 'streamed' | 'live' | 'infinite' | 'mutation';
+/**
+ * The symbol under which TanStack Query utils attach operation details
+ * (key and operation type) to the client context.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/tanstack-query#client-context | TanStack Query Integration - Client Context}
+ */
+declare const OPERATION_CONTEXT_SYMBOL: unique symbol;
+/**
+ * A client context automatically populated by TanStack Query utils,
+ * exposing the operation key and type of the calling operation.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/tanstack-query#client-context | TanStack Query Integration - Client Context}
+ */
+interface OperationContext {
+    [OPERATION_CONTEXT_SYMBOL]?: {
+        key: QueryKey;
+        type: OperationType;
+    };
+}
+type QueryKeyOptions<TInput> = (undefined extends TInput ? {
+    input?: TInput | SkipToken;
+} : {
+    input: TInput | SkipToken;
+}) | {
+    queryKey: QueryKey;
+};
+type QueryOptionsIn<TClientContext extends ClientContext, TInput, TOutput, TError, TSelectData, TInitialData> = (undefined extends TInput ? {
+    input?: TInput | SkipToken;
+} : {
+    input: TInput | SkipToken;
+}) & (object extends TClientContext ? {
+    context?: TClientContext;
+} : {
+    context: TClientContext;
+}) & Omit<QueryObserverOptions<TOutput, TError, TSelectData>, 'queryKey' | '_defaulted' | '_optimisticResults'> & {
+    queryKey?: QueryKey;
+    initialData?: TInitialData;
+};
+type QueryOptionsOut<TOutput, TError, TSelectData, TInitialData> = Pick<QueryObserverOptions<TOutput, TError, TSelectData, TOutput, DataTag<QueryKey, TOutput, TError>>, 'queryKey' | 'throwOnError' | 'select' | 'retryDelay'> & (undefined extends TInitialData ? object : {
+    initialData: TInitialData;
+}) & {
+    queryFn: QueryFunction<TOutput, DataTag<QueryKey, TOutput, TError>>;
+};
+type StreamedKeyOptions<TInput> = ((undefined extends TInput ? {
+    input?: TInput | SkipToken;
+} : {
+    input: TInput | SkipToken;
+}) & {
+    queryFnOptions?: SerializableStreamedQueryOptions;
+}) | {
+    queryKey: QueryKey;
+};
+type StreamedOptionsIn<TClientContext extends ClientContext, TInput, TOutput, TError, TSelectData, TInitialData> = QueryOptionsIn<TClientContext, TInput, TOutput, TError, TSelectData, TInitialData> & {
+    queryFnOptions?: SerializableStreamedQueryOptions;
+};
+type StreamedOptionsOut<TOutput, TError, TSelectData, TInitialData> = QueryOptionsOut<TOutput, TError, TSelectData, TInitialData>;
+type InfiniteKeyOptions<TInput, TPageParam> = Pick<InfiniteOptionsIn<any, TInput, any, any, any, TPageParam, any>, 'input' | 'initialPageParam'> | {
+    queryKey: QueryKey;
+};
+type InfiniteOptionsIn<TClientContext extends ClientContext, TInput, TOutput, TError, TSelectData, TPageParam, TInitialData> = {
+    input: ((pageParam: TPageParam) => TInput) | SkipToken;
+    initialData?: TInitialData;
+    queryKey?: QueryKey;
+} & (object extends TClientContext ? {
+    context?: TClientContext;
+} : {
+    context: TClientContext;
+}) & Omit<InfiniteQueryObserverOptions<TOutput, TError, TSelectData, QueryKey, TPageParam>, 'queryKey' | '_defaulted' | '_optimisticResults'>;
+type InfiniteOptionsOut<TOutput, TError, TSelectData, TPageParam, TInitialData> = Pick<InfiniteQueryObserverOptions<TOutput, TError, TSelectData, DataTag<QueryKey, InfiniteData<TOutput, TPageParam>, TError>, TPageParam>, 'queryKey' | 'select' | 'throwOnError' | 'retryDelay' | 'initialPageParam' | 'getNextPageParam' | 'getPreviousPageParam'> & (undefined extends TInitialData ? object : {
+    initialData: TInitialData;
+}) & {
+    queryFn: QueryFunction<TOutput, DataTag<QueryKey, InfiniteData<TOutput, TPageParam>, TError>, TPageParam>;
+};
+type MutationKeyOptions = Pick<MutationOptionsIn<any, any, any, any, any>, 'mutationKey'>;
+type MutationOptionsIn<TClientContext extends ClientContext, TInput, TOutput, TError, TMutationContext> = (object extends TClientContext ? {
+    context?: TClientContext;
+} : {
+    context: TClientContext;
+}) & MutationOptionsOut<TInput, TOutput, TError, TMutationContext>;
+type MutationOptionsOut<TInput, TOutput, TError, TMutationContext> = MutationObserverOptions<TOutput, TError, TInput, TMutationContext>;
+
+interface OperationKeyPrefixOptions {
+    /**
+     * Prepended as the first element of the key when present.
+     * Use this to avoid key conflicts when multiple router utils share the same client.
+     */
+    prefix?: string;
+}
+type OperationKeyOptions<TType extends OperationType, TInput> = OperationKeyPrefixOptions & {
+    type?: TType;
+    input?: TType extends 'mutation' ? never : PartialDeep<TInput>;
+    fnOptions?: TType extends 'streamed' ? SerializableStreamedQueryOptions : never;
+};
+type OperationKey<TType extends OperationType, TInput> = [path: string[], options: Omit<OperationKeyOptions<TType, TInput>, 'prefix'>] | [prefix: string, path: string[], options: Omit<OperationKeyOptions<TType, TInput>, 'prefix'>];
+declare function generateOperationKey<TType extends OperationType, TInput>(path: string[], options?: OperationKeyOptions<TType, TInput>): OperationKey<TType, TInput>;
+
+declare class SharedUtils<TInput> {
+    protected readonly path: string[];
+    protected readonly options: OperationKeyPrefixOptions;
+    constructor(path: string[], options: OperationKeyPrefixOptions);
+    /**
+     * Generate a **partial matching** key for actions like revalidating queries, checking mutation status, etc.
+     */
+    key<TType extends OperationType>(options?: Omit<OperationKeyOptions<TType, TInput>, 'prefix'>): OperationKey<TType, TInput>;
+}
+
+interface ProcedureUtilsQueryInterceptorOptions<TClientContext extends ClientContext, TInput> {
+    path: string[];
+    context: TClientContext & OperationContext;
+    input: TInput | SkipToken;
+    fnContext: QueryFunctionContext;
+}
+type ProcedureUtilsQueryInterceptor<TClientContext extends ClientContext, TInput, TOutput, TError> = Interceptor<ProcedureUtilsQueryInterceptorOptions<TClientContext, TInput>, PromiseWithError<TOutput, TError>>;
+interface ProcedureUtilsStreamedInterceptorOptions<TClientContext extends ClientContext, TInput> extends ProcedureUtilsQueryInterceptorOptions<TClientContext, TInput> {
+}
+type ProcedureUtilsStreamedInterceptor<TClientContext extends ClientContext, TInput, TOutput, TError> = Interceptor<ProcedureUtilsStreamedInterceptorOptions<TClientContext, TInput>, PromiseWithError<InferStreamedQueryOutput<TOutput>, TError>>;
+interface ProcedureUtilsLiveInterceptorOptions<TClientContext extends ClientContext, TInput> extends ProcedureUtilsQueryInterceptorOptions<TClientContext, TInput> {
+}
+type ProcedureUtilsLiveInterceptor<TClientContext extends ClientContext, TInput, TOutput, TError> = Interceptor<ProcedureUtilsLiveInterceptorOptions<TClientContext, TInput>, PromiseWithError<InferLiveQueryOutput<TOutput>, TError>>;
+interface ProcedureUtilsInfiniteInterceptorOptions<TClientContext extends ClientContext, TInput> extends ProcedureUtilsQueryInterceptorOptions<TClientContext, TInput> {
+    fnContext: QueryFunctionContext<QueryKey, any>;
+}
+type ProcedureUtilsInfiniteInterceptor<TClientContext extends ClientContext, TInput, TOutput, TError> = Interceptor<ProcedureUtilsInfiniteInterceptorOptions<TClientContext, TInput>, PromiseWithError<TOutput, TError>>;
+interface ProcedureUtilsMutationInterceptorOptions<TClientContext extends ClientContext, TInput> extends Omit<ProcedureUtilsQueryInterceptorOptions<TClientContext, TInput>, 'input' | 'fnContext'> {
+    input: TInput;
+    fnContext: MutationFunctionContext;
+}
+type ProcedureUtilsMutationInterceptor<TClientContext extends ClientContext, TInput, TOutput, TError> = Interceptor<ProcedureUtilsMutationInterceptorOptions<TClientContext, TInput>, PromiseWithError<TOutput, TError>>;
+/**
+ * Can be partial options for spread-merged options,
+ * or a function that receives per-call options and returns overridden this.options.
+ */
+type ProcedureUtilsModifier<T extends object> = Partial<T> | ((options: T) => T);
+interface ProcedureUtilsOptions<TClientContext extends ClientContext, TInput, TOutput, TError> extends OperationKeyPrefixOptions {
+    /**
+     * Key options modifier for .queryKey and .queryOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    queryKey?: ProcedureUtilsModifier<QueryKeyOptions<TInput>>;
+    /**
+     * Interceptors that intercept queryFn inside .queryOptions, guaranteed to be executed.
+     */
+    queryInterceptors?: ProcedureUtilsQueryInterceptor<TClientContext, TInput, TOutput, TError>[];
+    /**
+     * Options modifier for .queryOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    queryOptions?: ProcedureUtilsModifier<QueryOptionsIn<TClientContext, TInput, TOutput, TError, unknown, unknown>>;
+    /**
+     * Key options modifier for .streamedKey and .streamedOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    streamedKey?: ProcedureUtilsModifier<StreamedKeyOptions<TInput>>;
+    /**
+     * Interceptors that intercept queryFn inside .streamedOptions, guaranteed to be executed.
+     */
+    streamedInterceptors?: ProcedureUtilsStreamedInterceptor<TClientContext, TInput, TOutput, TError>[];
+    /**
+     * Options modifier for .streamedOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    streamedOptions?: ProcedureUtilsModifier<StreamedOptionsIn<TClientContext, TInput, InferStreamedQueryOutput<TOutput>, TError, unknown, unknown>>;
+    /**
+     * Key options modifier for .liveKey and .liveOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    liveKey?: ProcedureUtilsModifier<QueryKeyOptions<TInput>>;
+    /**
+     * Interceptors that intercept queryFn inside .liveOptions, guaranteed to be executed.
+     */
+    liveInterceptors?: ProcedureUtilsLiveInterceptor<TClientContext, TInput, TOutput, TError>[];
+    /**
+     * Options modifier for .liveOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    liveOptions?: ProcedureUtilsModifier<QueryOptionsIn<TClientContext, TInput, InferLiveQueryOutput<TOutput>, TError, unknown, unknown>>;
+    /**
+     * Key options modifier for .infiniteKey and .infiniteOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    infiniteKey?: ProcedureUtilsModifier<InfiniteKeyOptions<TInput, unknown>>;
+    /**
+     * Interceptors that intercept queryFn inside .infiniteOptions, guaranteed to be executed.
+     */
+    infiniteInterceptors?: ProcedureUtilsInfiniteInterceptor<TClientContext, TInput, TOutput, TError>[];
+    /**
+     * Options modifier for .infiniteOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    infiniteOptions?: ProcedureUtilsModifier<InfiniteOptionsIn<TClientContext, TInput, TOutput, TError, unknown, unknown, unknown>>;
+    /**
+     * Key options modifier for .mutationKey and .mutationOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    mutationKey?: ProcedureUtilsModifier<MutationKeyOptions>;
+    /**
+     * Interceptors that intercept mutationFn inside .mutationOptions, guaranteed to be executed.
+     */
+    mutationInterceptors?: ProcedureUtilsMutationInterceptor<TClientContext, TInput, TOutput, TError>[];
+    /**
+     * Options modifier for .mutationOptions
+     * Can be partial options or a function that receives per-call options and returns override this.options.
+     */
+    mutationOptions?: ProcedureUtilsModifier<MutationOptionsIn<TClientContext, TInput, TOutput, TError, unknown>>;
+}
+declare function isProcedureUtilsOptions(value: unknown): value is ProcedureUtilsOptions<any, any, any, any>;
+/**
+ * Merge two procedure utils options where `override` takes priority.
+ * A key explicitly set to `undefined` in `override` resets the base value.
+ * When both sides define a key: interceptors are concatenated (base ones run first),
+ * modifiers are spread-merged when both are plain objects and composed (base applied
+ * first) otherwise, with plain objects applied as regular spread merges.
+ */
+declare function mergeProcedureUtilsOptions<TClientContext extends ClientContext, TInput, TOutput, TError>(base: ProcedureUtilsOptions<TClientContext, TInput, TOutput, TError>, override: ProcedureUtilsOptions<TClientContext, TInput, TOutput, TError>): ProcedureUtilsOptions<TClientContext, TInput, TOutput, TError>;
+declare class ProcedureUtils<TClientContext extends ClientContext, TInput, TOutput, TError> extends SharedUtils<TInput> {
+    protected readonly options: ProcedureUtilsOptions<TClientContext, TInput, TOutput, TError>;
+    /**
+     * Calling corresponding procedure client
+     */
+    call: Client<TClientContext, TInput, TOutput, TError>;
+    constructor(path: string[], client: Client<TClientContext, TInput, TOutput, TError>, options?: ProcedureUtilsOptions<TClientContext, TInput, TOutput, TError>);
+    /**
+     * Generate a **full matching** key for [Query Options](https://orpc.dev/docs/integrations/tanstack-query#query-options).
+     */
+    queryKey(...rest: MaybeOptionalOptions<QueryKeyOptions<TInput>>): DataTag<QueryKey, TOutput, TError>;
+    /**
+     * Generate options used for useQuery/useSuspenseQuery/prefetchQuery/...
+     */
+    queryOptions<USelectData = TOutput, UInitialData = undefined>(...rest: MaybeOptionalOptions<QueryOptionsIn<TClientContext, TInput, TOutput, TError, USelectData, UInitialData>>): NoInfer<QueryOptionsOut<TOutput, TError, USelectData, UInitialData>>;
+    /**
+     * Generate a **full matching** key for [Streamed Query Options](https://orpc.dev/docs/integrations/tanstack-query#streamed-query-options).
+     */
+    streamedKey(...rest: MaybeOptionalOptions<StreamedKeyOptions<TInput>>): DataTag<QueryKey, InferStreamedQueryOutput<TOutput>, TError>;
+    /**
+     * Configure queries for [AsyncIteratorObject](https://orpc.dev/docs/async-iterator-object).
+     * This is built on [TanStack Query streamedQuery](https://tanstack.com/query/latest/docs/reference/streamedQuery)
+     * and works with hooks like `useQuery`, `useSuspenseQuery`, or `prefetchQuery`.
+     */
+    streamedOptions<USelectData = InferStreamedQueryOutput<TOutput>, UInitialData = undefined>(...rest: MaybeOptionalOptions<StreamedOptionsIn<TClientContext, TInput, InferStreamedQueryOutput<TOutput>, TError, USelectData, UInitialData>>): NoInfer<StreamedOptionsOut<InferStreamedQueryOutput<TOutput>, TError, USelectData, UInitialData>>;
+    /**
+     * Generate a **full matching** key for [Live Query Options](https://orpc.dev/docs/integrations/tanstack-query#live-query-options).
+     */
+    liveKey(...rest: MaybeOptionalOptions<QueryKeyOptions<TInput>>): DataTag<QueryKey, InferLiveQueryOutput<TOutput>, TError>;
+    /**
+     * Configure live queries for [AsyncIteratorObject](https://orpc.dev/docs/async-iterator-object).
+     * Unlike `.streamedOptions` which accumulates chunks, live queries replace the entire result with each new chunk received.
+     * Works with hooks like `useQuery`, `useSuspenseQuery`, or `prefetchQuery`.
+     */
+    liveOptions<USelectData = InferLiveQueryOutput<TOutput>, UInitialData = undefined>(...rest: MaybeOptionalOptions<QueryOptionsIn<TClientContext, TInput, InferLiveQueryOutput<TOutput>, TError, USelectData, UInitialData>>): NoInfer<QueryOptionsOut<InferLiveQueryOutput<TOutput>, TError, USelectData, UInitialData>>;
+    /**
+     * Generate a **full matching** key for [Infinite Query Options](https://orpc.dev/docs/integrations/tanstack-query#infinite-query-options).
+     */
+    infiniteKey<UPageParam>(optionsIn: InfiniteKeyOptions<TInput, UPageParam>): DataTag<QueryKey, InfiniteData<TOutput, UPageParam>, TError>;
+    /**
+     * Generate options used for useInfiniteQuery/useSuspenseInfiniteQuery/prefetchInfiniteQuery/...
+     */
+    infiniteOptions<UPageParam, USelectData = InfiniteData<TOutput, UPageParam>, UInitialData = undefined>(optionsIn: InfiniteOptionsIn<TClientContext, TInput, TOutput, TError, USelectData, UPageParam, UInitialData>): NoInfer<InfiniteOptionsOut<TOutput, TError, USelectData, UPageParam, UInitialData>>;
+    /**
+     * Generate a **full matching** key for [Mutation Options](https://orpc.dev/docs/integrations/tanstack-query#mutation-options).
+     */
+    mutationKey(optionsIn?: MutationKeyOptions): DataTag<QueryKey, TOutput, TError>;
+    /**
+     * Generate options used for useMutation/...
+     */
+    mutationOptions<UMutationContext>(...rest: MaybeOptionalOptions<MutationOptionsIn<TClientContext, TInput, TOutput, TError, UMutationContext>>): NoInfer<MutationOptionsOut<TInput, TOutput, TError, UMutationContext>>;
+}
+
+/**
+ * Plugin that packages reusable defaults and interceptors for router utils.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/tanstack-query#plugins | TanStack Query Integration - Plugins}
+ */
+interface RouterUtilsPlugin<T extends AnyNestedClient> extends OrderablePlugin {
+    /**
+     * Initializes the router utils plugin and returns updated router utils options.
+     * Called once per plugin instance during composition.
+     *
+     * This method allows plugins to wrap, extend, or transform router utils options,
+     * such as interceptors or configuration.
+     *
+     * @param options - The current router utils options from previous plugins or base configuration
+     * @returns Transformed router utils options with this plugin's modifications applied
+     *
+     * @example
+     * ```ts
+     * init(options) {
+     *   return {
+     *     ...options,
+     *     mutationInterceptors: [...(options.mutationInterceptors ?? []), myInterceptor]
+     *   }
+     * }
+     * ```
+     */
+    init?(options: RouterUtilsOptions<T>): RouterUtilsOptions<T>;
+    /**
+     * Initializes per-procedure router utils options and returns updated options.
+     * Called once per procedure utils instance during composition.
+     *
+     * This method allows plugins to customize merged procedure-specific defaults,
+     * such as query or mutation options, for the current path.
+     *
+     * @param path - The current procedure path
+     * @param options - The merged procedure utils options for the current procedure
+     * @returns Transformed procedure utils options with this plugin's modifications applied
+     */
+    initProcedureOptions?(path: string[], options: ProcedureUtilsOptions<InferClientContext<T>, any, any, InferClientError<T>>): ProcedureUtilsOptions<InferClientContext<T>, any, any, InferClientError<T>>;
+}
+declare class CompositeRouterUtilsPlugin<T extends AnyNestedClient> implements RouterUtilsPlugin<T> {
+    protected readonly plugins: RouterUtilsPlugin<T>[];
+    readonly name = "~composite";
+    constructor(plugins?: RouterUtilsPlugin<T>[]);
+    init(options: RouterUtilsOptions<T>): RouterUtilsOptions<T>;
+    initProcedureOptions(path: string[], options: ProcedureUtilsOptions<InferClientContext<T>, any, any, InferClientError<T>>): ProcedureUtilsOptions<InferClientContext<T>, any, any, InferClientError<T>>;
+}
+
+/**
+ * The utils shape derived from a client: procedure clients map to procedure
+ * utils, and routers map recursively to nested utils.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/tanstack-query | TanStack Query Integration}
+ */
+type RouterUtils<T extends AnyNestedClient> = T extends Client<infer UClientContext, infer UInput, infer UOutput, infer UError> ? Public<ProcedureUtils<UClientContext, UInput, UOutput, UError>> : {
+    [K in keyof T]: T[K] extends AnyNestedClient ? RouterUtils<T[K]> : never;
+} & Public<SharedUtils<unknown>>;
+type RouterUtilsScoped<T extends AnyNestedClient> = T extends Client<infer UClientContext, infer UInput, infer UOutput, infer UError> ? ProcedureUtilsOptions<UClientContext, UInput, UOutput, UError> : {
+    [K in keyof T]?: T[K] extends AnyNestedClient ? RouterUtilsScoped<T[K]> : never;
+};
+interface RouterUtilsOptions<T extends AnyNestedClient> extends OperationKeyPrefixOptions {
+    /**
+     * Base path for all query keys.
+     *
+     * @internal
+     */
+    path?: string[] | undefined;
+    /**
+     * Interceptors that intercept queryFn inside .queryOptions
+     */
+    queryInterceptors?: ProcedureUtilsQueryInterceptor<InferClientContext<T>, unknown, unknown, InferClientError<T>>[];
+    /**
+     * Interceptors that intercept queryFn inside .streamedOptions
+     */
+    streamedInterceptors?: ProcedureUtilsStreamedInterceptor<InferClientContext<T>, unknown, unknown, InferClientError<T>>[];
+    /**
+     * Interceptors that intercept queryFn inside .liveOptions
+     */
+    liveInterceptors?: ProcedureUtilsLiveInterceptor<InferClientContext<T>, unknown, unknown, InferClientError<T>>[];
+    /**
+     * Interceptors that intercept queryFn inside .infiniteOptions
+     */
+    infiniteInterceptors?: ProcedureUtilsInfiniteInterceptor<InferClientContext<T>, unknown, unknown, InferClientError<T>>[];
+    /**
+     * Interceptors that intercept mutationFn inside .mutationOptions
+     */
+    mutationInterceptors?: ProcedureUtilsMutationInterceptor<InferClientContext<T>, unknown, unknown, InferClientError<T>>[];
+    /**
+     * Per-procedure options following the shape of the router.
+     * Allows fine-grained configuration of individual procedure utils
+     * without affecting the rest of the router.
+     */
+    scoped?: RouterUtilsScoped<T> | undefined;
+    /**
+     * Plugins to extend router utils behavior.
+     */
+    plugins?: RouterUtilsPlugin<T>[] | undefined;
+}
+/**
+ * Creates TanStack Query utils from a client, exposing query/mutation
+ * option builders for every procedure in the router.
+ *
+ * @remarks
+ * **Note**: Both client-side and server-side clients are supported.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/tanstack-query | TanStack Query Integration}
+ */
+declare function createRouterUtils<T extends AnyNestedClient>(client: T, options?: NoInfer<RouterUtilsOptions<T>>): RouterUtils<T>;
+
+interface ContractUtilsFactory<TClientContext extends ClientContext> {
+    <T extends RouterContract>(contract: T): RouterUtils<RouterContractClient<T, TClientContext>>;
+}
+interface ContractUtilsFactoryOptions<TClientContext extends ClientContext> extends Omit<RouterUtilsOptions<RouterContractClient<RouterContract, TClientContext>>, 'path'> {
+}
+/**
+ * Creates a factory that builds TanStack Query utils directly from a contract,
+ * using the given contract client factory. Useful for scaling large projects
+ * where each part only needs a slice of the router.
+ *
+ * @remarks
+ * **Note**: The contract must define a `path` meta matching its position in the root router contract.
+ *
+ * @see {@link https://orpc.dev/docs/contract/client-factory#tanstack-query-integration | Contract Client Factory - TanStack Query Integration}
+ */
+declare function createContractUtilsFactory<TClientContext extends ClientContext>(clientFactory: ContractClientFactory<TClientContext>, options: ContractUtilsFactoryOptions<TClientContext>): ContractUtilsFactory<TClientContext>;
+interface ContractJsonifiedUtilsFactory<TClientContext extends ClientContext> {
+    <T extends RouterContract>(contract: T): RouterUtils<JsonifiedClient<RouterContractClient<T, TClientContext>>>;
+}
+interface ContractJsonifiedUtilsFactoryOptions<TClientContext extends ClientContext> extends Omit<RouterUtilsOptions<JsonifiedClient<RouterContractClient<RouterContract, TClientContext>>>, 'path'> {
+}
+declare function createContractJsonifiedUtilsFactory<TClientContext extends ClientContext>(clientFactory: ContractClientFactory<TClientContext>, options: ContractJsonifiedUtilsFactoryOptions<TClientContext>): ContractJsonifiedUtilsFactory<TClientContext>;
+
+type TanstackQueryMetaOptions<TClientContext extends ClientContext, TInput, TOutput, TError> = Omit<ProcedureUtilsOptions<TClientContext, TInput, TOutput, TError>, 'prefix'>;
+interface TanstackQueryMetaPlugin<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> extends MetaPlugin<TInputSchema, TOutputSchema, TErrorMap> {
+    name: '~tanstack-query';
+}
+/**
+ * Define base TanStack Query options and interceptors on a procedure contract.
+ * Applied multiple times, later options are spread-merged with higher priority
+ * while interceptors are concatenated. A key explicitly set to `undefined`
+ * resets the value from earlier applications instead of merging.
+ *
+ * Apply them to router utils with {@link ContractOptionsUtilsPlugin}.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/tanstack-query#contract-options-plugin | TanStack Query Integration - Contract Options Plugin}
+ */
+declare function tanstackQuery<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap>(options: TanstackQueryMetaOptions<ClientContext, InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>, ORPCErrorFromErrorMap<TErrorMap> | ThrowableError>): TanstackQueryMetaPlugin<TInputSchema, TOutputSchema, TErrorMap>;
+declare function getTanstackQueryMeta(procedureOrLazy: {
+    '~orpc': {
+        meta: Meta;
+    };
+}): TanstackQueryMetaOptions<ClientContext, unknown, unknown, ThrowableError> | undefined;
+/**
+ * Router utils plugin that applies base options defined via {@link tanstackQuery}
+ * on the given router contract. Meta options act as the base layer: options defined
+ * on the utils override them, and utils interceptors run after meta interceptors.
+ *
+ * The contract shape must match the client the utils are created from,
+ * so pass the root router contract when utils paths start from the root.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/tanstack-query#contract-options-plugin | TanStack Query Integration - Contract Options Plugin}
+ */
+declare class ContractOptionsUtilsPlugin<T extends AnyNestedClient = AnyNestedClient> implements RouterUtilsPlugin<T> {
+    private readonly contract;
+    readonly name = "~contract-options";
+    constructor(contract: RouterContract);
+    initProcedureOptions(path: string[], options: ProcedureUtilsOptions<InferClientContext<T>, any, any, InferClientError<T>>): ProcedureUtilsOptions<InferClientContext<T>, any, any, InferClientError<T>>;
+}
+
+export { CompositeRouterUtilsPlugin, ContractOptionsUtilsPlugin, OPERATION_CONTEXT_SYMBOL, ProcedureUtils, SharedUtils, OPERATION_CONTEXT_SYMBOL as TANSTACK_QUERY_OPERATION_CONTEXT_SYMBOL, createContractJsonifiedUtilsFactory, createContractUtilsFactory, createRouterUtils, createRouterUtils as createTanstackQueryUtils, generateOperationKey, getTanstackQueryMeta, isProcedureUtilsOptions, mergeProcedureUtilsOptions, serializableStreamedQuery, tanstackQuery };
+export type { ContractJsonifiedUtilsFactory, ContractJsonifiedUtilsFactoryOptions, ContractUtilsFactory, ContractUtilsFactoryOptions, InferLiveQueryOutput, InferStreamedQueryOutput, InfiniteKeyOptions, InfiniteOptionsIn, InfiniteOptionsOut, MutationKeyOptions, MutationOptionsIn, MutationOptionsOut, OperationContext, OperationKey, OperationKeyOptions, OperationKeyPrefixOptions, OperationType, ProcedureUtilsInfiniteInterceptor, ProcedureUtilsInfiniteInterceptorOptions, ProcedureUtilsLiveInterceptor, ProcedureUtilsLiveInterceptorOptions, ProcedureUtilsModifier, ProcedureUtilsMutationInterceptor, ProcedureUtilsMutationInterceptorOptions, ProcedureUtilsOptions, ProcedureUtilsQueryInterceptor, ProcedureUtilsQueryInterceptorOptions, ProcedureUtilsStreamedInterceptor, ProcedureUtilsStreamedInterceptorOptions, QueryKeyOptions, QueryOptionsIn, QueryOptionsOut, RouterUtils, RouterUtilsOptions, RouterUtilsPlugin, RouterUtilsScoped, SerializableStreamedQueryOptions, StreamedKeyOptions, StreamedOptionsIn, StreamedOptionsOut, TanstackQueryMetaOptions, TanstackQueryMetaPlugin, OperationContext as TanstackQueryOperationContext };

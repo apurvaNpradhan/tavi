@@ -1,0 +1,46 @@
+{
+  "//": [
+    "Editor/LSP-facing config for the whole workspace.",
+    "It is deliberately permissive (bundler resolution, DOM + node types, jsx enabled)",
+    "so that a single TS server can navigate across apps and packages without an",
+    "inferred-project fallback. Authoritative type checking is per package: CI runs",
+    "`turbo typecheck`, which uses each app/package tsconfig with its exact settings."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noUncheckedIndexedAccess": true,
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@/*": ["./apps/web/src/*"],
+      "@i18n/*": ["./i18n/*"],
+      "@tavi/api": ["./apps/api/src/index.ts"],
+      "@tavi/api/router": ["./apps/api/src/router.ts"],
+      "@tavi/libs": ["./packages/libs/src/index.ts"],
+      "@tavi/permissions": ["./packages/permissions/src/index.ts"],
+      "@tavi/email": ["./packages/email/src/index.tsx"],
+      "@tavi/env/server": ["./packages/env/src/server.ts"],
+      "@tavi/env/web": ["./packages/env/src/web.ts"]
+    }
+  },
+  "include": [
+    "apps/*/src/**/*.ts",
+    "apps/*/src/**/*.tsx",
+    "apps/*/*.ts",
+    "packages/*/src/**/*.ts",
+    "packages/*/src/**/*.tsx",
+    "i18n/**/*.ts"
+  ],
+  "exclude": ["**/node_modules", "**/dist", "**/coverage"]
+}

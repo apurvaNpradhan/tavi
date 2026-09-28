@@ -1,0 +1,5 @@
+import { DevtoolsPanelProps } from '@tanstack/devtools-utils/react';
+export interface A11yDevtoolsReactInit extends DevtoolsPanelProps {
+}
+declare const A11yDevtoolsPanel: (props: import('@tanstack/devtools').TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element, A11yDevtoolsPanelNoOp: (_props: import('@tanstack/devtools').TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element;
+export { A11yDevtoolsPanel, A11yDevtoolsPanelNoOp };

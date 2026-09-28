@@ -1,0 +1,1551 @@
+{
+  "info": {
+    "title": "Tavi API",
+    "version": "1.0.0",
+    "description": "A multi-tenant app skeleton: authentication and workspaces."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:1337/api",
+      "description": "Tavi API server"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key or session token (Bearer)"
+      }
+    },
+    "schemas": {
+      "InstanceStatus": {
+        "type": "object",
+        "properties": {
+          "hasUsers": {
+            "type": "boolean"
+          },
+          "hasAdmin": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hasUsers",
+          "hasAdmin"
+        ],
+        "additionalProperties": false
+      },
+      "CurrentUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isAnonymous": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "onboardingStep": {
+            "type": "string",
+            "description": "One of: profile, workspace, completed."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "image",
+          "locale",
+          "role",
+          "isAnonymous",
+          "onboardingStep"
+        ],
+        "additionalProperties": false
+      },
+      "UndefinedError": {
+        "title": "UndefinedError",
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": false
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": [
+          "defined",
+          "code",
+          "message"
+        ]
+      },
+      "NotFound": {
+        "title": "NOT_FOUND",
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": true
+          },
+          "code": {
+            "const": "NOT_FOUND"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": [
+          "defined",
+          "code",
+          "message"
+        ]
+      },
+      "SavedAvatar": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Public URL of the stored avatar, served from /api/user/avatar/{id}."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Decoded size in bytes."
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "size"
+        ],
+        "additionalProperties": false
+      },
+      "BadRequest": {
+        "title": "BAD_REQUEST",
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": true
+          },
+          "code": {
+            "const": "BAD_REQUEST"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": [
+          "defined",
+          "code",
+          "message"
+        ]
+      },
+      "AvatarDeleted": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "description": "False when the user had no stored avatar to remove."
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "additionalProperties": false
+      },
+      "RuntimeConfig": {
+        "type": "object",
+        "properties": {
+          "appName": {
+            "type": "string"
+          },
+          "registrationEnabled": {
+            "type": "boolean"
+          },
+          "guestAccessEnabled": {
+            "type": "boolean"
+          },
+          "workspaceCreationEnabled": {
+            "type": "boolean"
+          },
+          "magicLinkEnabled": {
+            "type": "boolean"
+          },
+          "emailOtpEnabled": {
+            "type": "boolean"
+          },
+          "socialProviders": {
+            "type": "object",
+            "properties": {
+              "github": {
+                "type": "boolean"
+              },
+              "google": {
+                "type": "boolean"
+              },
+              "custom": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "github",
+              "google",
+              "custom"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "appName",
+          "registrationEnabled",
+          "guestAccessEnabled",
+          "workspaceCreationEnabled",
+          "magicLinkEnabled",
+          "emailOtpEnabled",
+          "socialProviders"
+        ],
+        "additionalProperties": false
+      },
+      "TeamSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "x-native-type": "date"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/instance/status": {
+      "get": {
+        "operationId": "getInstanceStatus",
+        "summary": "Get instance status",
+        "description": "Public setup status. When hasUsers is false the next signup becomes the instance administrator.",
+        "tags": [
+          "Instance"
+        ],
+        "responses": {
+          "200": {
+            "description": "Instance status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceStatus"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/user/me": {
+      "get": {
+        "operationId": "getCurrentUser",
+        "summary": "Get current user",
+        "description": "The authenticated user's profile, read fresh from the database so an administrator's role change is reflected immediately.",
+        "tags": [
+          "User"
+        ],
+        "responses": {
+          "200": {
+            "description": "The current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentUser"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user/avatar": {
+      "post": {
+        "operationId": "uploadAvatar",
+        "summary": "Upload avatar",
+        "description": "Store a base64 encoded avatar (PNG, JPEG or WebP, up to 512KB) and point the profile's image at it. Replacing an avatar changes its public URL.",
+        "tags": [
+          "User"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "contentType": {
+                    "type": "string",
+                    "description": "One of image/png, image/jpeg or image/webp.",
+                    "example": "image/png"
+                  },
+                  "data": {
+                    "type": "string",
+                    "maxLength": 699116,
+                    "description": "Base64 encoded image bytes, optionally with a data: URL prefix."
+                  }
+                },
+                "required": [
+                  "contentType",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored avatar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedAvatar"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported image type, malformed base64, or too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BadRequest"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAvatar",
+        "summary": "Delete avatar",
+        "description": "Remove the stored avatar and clear the profile's image. Succeeds even when there was nothing to remove.",
+        "tags": [
+          "User"
+        ],
+        "responses": {
+          "200": {
+            "description": "Whether an avatar was removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvatarDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "operationId": "getRuntimeConfig",
+        "summary": "Get runtime configuration",
+        "description": "Non-sensitive feature flags for the client.",
+        "tags": [
+          "Config"
+        ],
+        "responses": {
+          "200": {
+            "description": "The runtime configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeConfig"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/team/{teamId}": {
+      "get": {
+        "operationId": "getTeamSummary",
+        "summary": "Get team summary",
+        "description": "Read a team's name and creation time within its authorized workspace.",
+        "tags": [
+          "Team"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "teamId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The team summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/invitation/{invitationId}": {
+      "get": {
+        "operationId": "getInvitationDetails",
+        "summary": "Get invitation details",
+        "description": "Looks up minimal details using the opaque ID in an invitation link.",
+        "tags": [
+          "Invitations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "invitationId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "invitation": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string",
+                          "format": "email",
+                          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                        },
+                        "workspaceName": {
+                          "type": "string"
+                        },
+                        "inviterName": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "x-native-type": "date"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "workspaceName",
+                        "inviterName",
+                        "expiresAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "valid"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/invitations/pending": {
+      "get": {
+        "operationId": "getPendingInvitations",
+        "summary": "Get pending invitations",
+        "description": "Lists unexpired pending invitations for the signed-in account email.",
+        "tags": [
+          "Invitations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "workspaceId": {
+                        "type": "string"
+                      },
+                      "workspaceName": {
+                        "type": "string"
+                      },
+                      "inviterName": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "x-native-type": "date"
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "x-native-type": "date"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "email",
+                      "workspaceId",
+                      "workspaceName",
+                      "inviterName",
+                      "role",
+                      "expiresAt",
+                      "createdAt"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/invitations/accept": {
+      "post": {
+        "operationId": "acceptInvitation",
+        "summary": "Accept an invitation",
+        "description": "Accepts an invitation for the signed-in account when its email matches.",
+        "tags": [
+          "Invitations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "invitationId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "invitationId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workspaceId": {
+                      "type": "string"
+                    },
+                    "memberId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "workspaceId",
+                    "memberId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/invitations": {
+      "post": {
+        "operationId": "createInvitation",
+        "summary": "Invite a workspace member",
+        "description": "Creates an invitation for an email address and a workspace role.",
+        "tags": [
+          "Invitations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "workspaceId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "role": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "email",
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string",
+                      "format": "email",
+                      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "organizationId": {
+                      "type": "string"
+                    },
+                    "inviterId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "x-native-type": "date"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "x-native-type": "date"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "email",
+                    "role",
+                    "organizationId",
+                    "inviterId",
+                    "status",
+                    "expiresAt",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listWorkspaceInvitations",
+        "summary": "List workspace invitations",
+        "description": "Lists invitations for a workspace the caller can manage.",
+        "tags": [
+          "Invitations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "workspaceId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "x-native-type": "date"
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "x-native-type": "date"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "email",
+                      "role",
+                      "status",
+                      "expiresAt",
+                      "createdAt"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/invitation-capabilities": {
+      "get": {
+        "operationId": "getInvitationCapabilities",
+        "summary": "Get invitation capabilities",
+        "description": "Returns safe invitation management capabilities for the caller.",
+        "tags": [
+          "Invitations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "workspaceId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "canList": {
+                      "type": "boolean"
+                    },
+                    "canCreate": {
+                      "type": "boolean"
+                    },
+                    "canCancel": {
+                      "type": "boolean"
+                    },
+                    "canChangeMembers": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "canList",
+                    "canCreate",
+                    "canCancel",
+                    "canChangeMembers"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/invitations/{invitationId}": {
+      "delete": {
+        "operationId": "cancelInvitation",
+        "summary": "Cancel an invitation",
+        "description": "Cancels a pending invitation in an authorized workspace.",
+        "tags": [
+          "Invitations"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "invitationId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/members": {
+      "get": {
+        "operationId": "listWorkspaceMembers",
+        "summary": "List workspace members",
+        "description": "Lists members of a workspace the caller can read.",
+        "tags": [
+          "Members"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "workspaceId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "userId": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "image": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "role": {
+                        "type": "string"
+                      },
+                      "joinedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "x-native-type": "date"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "userId",
+                      "name",
+                      "email",
+                      "role",
+                      "joinedAt"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/members/{memberId}/role": {
+      "patch": {
+        "operationId": "updateWorkspaceMemberRole",
+        "summary": "Update a member role",
+        "description": "Changes a member's role in its owning workspace.",
+        "tags": [
+          "Members"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "memberId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "member": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "userId": {
+                          "type": "string"
+                        },
+                        "organizationId": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "userId",
+                        "organizationId",
+                        "role"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "member"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/members/{memberId}": {
+      "delete": {
+        "operationId": "removeWorkspaceMember",
+        "summary": "Remove a workspace member",
+        "description": "Removes a member from its owning workspace.",
+        "tags": [
+          "Members"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "memberId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "member": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "userId": {
+                          "type": "string"
+                        },
+                        "organizationId": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "userId",
+                        "organizationId",
+                        "role"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "member"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/roles": {
+      "get": {
+        "operationId": "listWorkspaceRoles",
+        "summary": "List workspace roles",
+        "description": "Lists role names available for workspace membership and invitations.",
+        "tags": [
+          "Members"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "workspaceId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "operationId": "listNotifications",
+        "summary": "List notifications",
+        "description": "Lists the authenticated user's notifications, newest first.",
+        "tags": [
+          "Notifications"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "invitation.accepted"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "x-native-type": "date"
+                          },
+                          "readAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "x-native-type": "date"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "type",
+                          "createdAt",
+                          "readAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "limit",
+                    "offset"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearNotifications",
+        "summary": "Clear notifications",
+        "description": "Deletes all notifications belonging to the authenticated user.",
+        "tags": [
+          "Notifications"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deletedCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "deletedCount"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/notifications/unread-count": {
+      "get": {
+        "operationId": "getUnreadNotificationCount",
+        "summary": "Get unread notification count",
+        "description": "Counts unread notifications for the authenticated user.",
+        "tags": [
+          "Notifications"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/notifications/{notificationId}/read": {
+      "post": {
+        "operationId": "markNotificationRead",
+        "summary": "Mark a notification as read",
+        "description": "Marks one of the authenticated user's notifications as read.",
+        "tags": [
+          "Notifications"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "notificationId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials"
+          }
+        }
+      }
+    },
+    "/auth/get-session": {
+      "get": {
+        "operationId": "getSession",
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Get session",
+        "description": "The current session, or null when the caller is not signed in. Served by Better Auth.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Session details, or null"
+          }
+        }
+      }
+    },
+    "/user/avatar/{id}": {
+      "get": {
+        "operationId": "getAvatar",
+        "tags": [
+          "User"
+        ],
+        "summary": "Download avatar",
+        "description": "Download an avatar by its id. Public and immutable: the id changes whenever the avatar is replaced, so the response can be cached indefinitely.",
+        "security": [],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The avatar image",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified"
+          },
+          "404": {
+            "description": "Avatar not found"
+          }
+        }
+      }
+    }
+  }
+}

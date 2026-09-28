@@ -1,0 +1,142 @@
+declare function toArray<T>(value: T): T extends readonly any[] ? T : (T extends undefined | null ? never : T[]);
+
+/**
+ * Error thrown when an operation is aborted.
+ * Uses the standardized 'AbortError' name for consistency with JavaScript APIs.
+ */
+declare class AbortError extends Error {
+    constructor(...rest: ConstructorParameters<typeof Error>);
+}
+
+/**
+ * Sequentially execute the function, if the previous execution is not completed, the next execution will be blocked
+ */
+declare function sequential<A extends any[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R>;
+
+declare class SequentialIdGenerator {
+    private index;
+    generate(): string;
+}
+
+type AsyncCleanupFnState = {
+    kind: 'success';
+    error?: undefined;
+} | {
+    kind: 'error';
+    error: unknown;
+} | {
+    kind: 'cancelled';
+    error?: unknown;
+};
+interface AsyncCleanupFn {
+    (state: AsyncCleanupFnState): Promise<void>;
+}
+
+declare function isAsyncIteratorObject(maybe: unknown): maybe is AsyncIteratorObject<any, any, any>;
+interface AsyncIteratorClassNextFn<T, TReturn> {
+    (): Promise<IteratorResult<T, TReturn>>;
+}
+declare const fallbackAsyncDisposeSymbol: unique symbol;
+declare const asyncDisposeSymbol: typeof Symbol extends {
+    asyncDispose: infer T;
+} ? T : typeof fallbackAsyncDisposeSymbol;
+declare class AsyncIteratorClass<T, TReturn = unknown, TNext = unknown> implements AsyncIteratorObject<T, TReturn, TNext>, AsyncGenerator<T, TReturn, TNext> {
+    private isDone;
+    private isExecuteComplete;
+    private readonly cleanup;
+    readonly next: AsyncIteratorClassNextFn<T, TReturn>;
+    constructor(next: AsyncIteratorClassNextFn<T, TReturn>, cleanup: AsyncCleanupFn);
+    return(value?: any): Promise<IteratorResult<T, TReturn>>;
+    throw(error: any): Promise<IteratorResult<T, TReturn>>;
+    /**
+     * asyncDispose symbol only available in esnext, we should fallback to Symbol.for('asyncDispose')
+     */
+    [asyncDisposeSymbol](): Promise<void>;
+    [Symbol.asyncIterator](): this;
+}
+
+declare function parseEmptyableJSON(text: string | null | undefined): unknown;
+declare function stringifyJSON<T>(value: T | {
+    toJSON(): T;
+}): undefined extends T ? undefined | string : string;
+
+/**
+ * Checks whether the object has at least one property with a defined value.
+ * Keys holding `undefined` are treated as absent, matching JSON semantics
+ * where such entries disappear on serialization.
+ */
+declare function hasAnyDefinedValue(object: Record<string, unknown>): boolean;
+/**
+ * Checks whether the provided container is a typescript object (object or function).
+ */
+declare function isTypescriptObject(maybeObject: unknown): maybeObject is object & Record<PropertyKey, unknown>;
+
+/**
+ * Creates a promise together with its associated `resolve` and `reject`
+ * functions.
+ *
+ * Equivalent to `Promise.withResolvers()`, but works in environments
+ * where that API is not yet available.
+ */
+declare function promiseWithResolvers<T>(): {
+    promise: Promise<T>;
+    resolve: (v: T) => void;
+    reject: (reason: unknown) => void;
+};
+
+interface GetOrBindOptions {
+    /**
+     * Whether to bind the function to the target before returning it.
+     *
+     * @default true
+     */
+    bind?: boolean;
+}
+declare function getOrBind<T extends object, K extends PropertyKey>(target: T, property: K, { bind }?: GetOrBindOptions): K extends keyof T ? T[K] : unknown;
+
+declare class Queue<T> {
+    private readonly items;
+    private readonly pendingPulls;
+    private closed;
+    /**
+     * Pushes an item into the queue.
+     * @throws when the queue is closed or aborted
+     */
+    push(item: T): void;
+    /**
+     * Pulls the next item from the queue.
+     *
+     * @throws when the queue is closed or aborted. Note that buffered items can still be pulled after close until the buffer is drained.
+     */
+    pull(): Promise<T>;
+    /**
+     * Closes the queue and rejects any pending pulls.
+     * Buffered items remain available to be pulled. Repeated calls are ignored.
+     */
+    close(reason?: unknown): void;
+    /**
+     * Aborts the queue.
+     * Unlike `close()`, this also discards any buffered items before closing.
+     */
+    abort(reason?: unknown): void;
+}
+
+interface SleepOptions {
+    signal?: AbortSignal | undefined;
+}
+/**
+ * sleep for a specified amount of time
+ */
+declare function sleep(ms: number, { signal }?: SleepOptions): Promise<void>;
+
+/**
+ * `encodeURIComponent` that never throws, lone surrogates become U+FFFD.
+ */
+declare function safeEncodeURIComponent(value: string): string;
+/**
+ * `decodeURIComponent` that never throws, malformed input is returned unchanged.
+ */
+declare function safeDecodeURIComponent(value: string): string;
+
+export { AbortError, AsyncIteratorClass, Queue, SequentialIdGenerator, getOrBind, hasAnyDefinedValue, isAsyncIteratorObject, isTypescriptObject, parseEmptyableJSON, promiseWithResolvers, safeDecodeURIComponent, safeEncodeURIComponent, sequential, sleep, stringifyJSON, toArray };
+export type { AsyncCleanupFn, AsyncCleanupFnState, AsyncIteratorClassNextFn, GetOrBindOptions, SleepOptions };

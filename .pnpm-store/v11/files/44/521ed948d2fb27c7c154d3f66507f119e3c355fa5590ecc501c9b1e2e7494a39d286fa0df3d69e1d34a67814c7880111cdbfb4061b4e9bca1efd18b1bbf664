@@ -1,0 +1,6 @@
+export { C as CompositeStandardLinkPlugin, R as RPCLinkCodec, S as StandardLink } from '../../shared/client.VXsLhJtT.mjs';
+import '@orpc/shared';
+import '@standard-server/core';
+import '@standard-server/fetch';
+import '../../shared/client.BYHnU_Z3.mjs';
+import '../../shared/client.Dtv1JPkU.mjs';

@@ -1,0 +1,28 @@
+# Local development stack: Postgres for the API and web app.
+#
+# A distinct project name is load-bearing: the bundled stack in compose.yml
+# declares the same `postgres` service, so sharing the default directory-derived
+# name would make the two files contest one container and one volume — and
+# `docker compose -f compose.yml down -v` would delete the development database.
+name: tavi-local
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tavi
+      POSTGRES_USER: tavi
+      POSTGRES_PASSWORD: tavi
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tavi -d tavi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

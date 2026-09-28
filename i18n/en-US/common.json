@@ -1,0 +1,19 @@
+{
+  "appName": "Tavi",
+  "loading": "Loading…",
+  "loadingLabel": "Loading",
+  "save": "Save",
+  "retry": "Retry",
+  "cancel": "Cancel",
+  "delete": "Delete",
+  "search": "Search",
+  "showPassword": "Show password",
+  "hidePassword": "Hide password",
+  "switchToLightTheme": "Switch to light theme",
+  "switchToDarkTheme": "Switch to dark theme",
+  "notFoundTitle": "404",
+  "notFoundDescription": "The page you're looking for might have been moved or doesn't exist.",
+  "errorTitle": "500",
+  "errorDescription": "Something went wrong while loading this page. Please try again.",
+  "goHome": "Go Home"
+}

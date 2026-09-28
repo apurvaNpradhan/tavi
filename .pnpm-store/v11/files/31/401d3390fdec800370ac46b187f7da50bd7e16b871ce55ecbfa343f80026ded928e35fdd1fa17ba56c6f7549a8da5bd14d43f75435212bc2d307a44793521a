@@ -1,0 +1,8 @@
+export declare const A11yDevtoolsPanel: (props: import('@tanstack/devtools').TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element;
+export declare const a11yDevtoolsPlugin: () => {
+    render: (_el: HTMLElement, props: import('@tanstack/devtools').TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+};
+export type { A11yDevtoolsReactInit } from './A11yDevtools.js';

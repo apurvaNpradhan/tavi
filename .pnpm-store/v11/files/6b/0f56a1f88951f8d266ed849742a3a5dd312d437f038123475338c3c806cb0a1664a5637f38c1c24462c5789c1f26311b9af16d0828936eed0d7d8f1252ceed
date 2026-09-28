@@ -1,0 +1,320 @@
+import { StandardMethod, StandardUrl, StandardHeaders, StandardBody, EventMeta, StandardRequest, StandardLazyResponse, StandardLazyRequest, StandardResponse } from '@standard-server/core';
+import { Queue, AsyncCleanupFn, AsyncIteratorClass } from '@standard-server/shared';
+
+/**
+ * Base interface for all peer messages.
+ *
+ * All payloads should be compatible with the structured clone algorithm.
+ */
+interface PeerMessage {
+    /**
+     * Correlation ID shared by a request, its response, and any related stream messages.
+     */
+    id: string;
+    /**
+     * Message discriminator. Determines the payload shape and semantics.
+     */
+    kind: string;
+    /**
+     * Structured payload. Shape is determined by `kind`.
+     */
+    json?: unknown;
+    /**
+     * Binary payload. Only present for message kinds that support binary transfer.
+     */
+    binary?: Uint8Array<ArrayBuffer> | Blob | undefined;
+}
+/**
+ * Initiates a request from client to server.
+ *
+ * Always the first message in requesting lifecycle.
+ */
+interface PeerRequestMessage extends PeerMessage {
+    /**
+     * Message kind.
+     */
+    kind: 'request';
+    /**
+     * Request payload, excluding the abort signal.
+     */
+    json: {
+        /**
+         * @example 'GET', 'POST', etc.
+         * @default 'POST'
+         */
+        method?: undefined | StandardMethod;
+        /**
+         * @example `/example`, `/example?query=param#fragment`
+         */
+        url: StandardUrl;
+        /**
+         * @example { 'content-type': 'application/json' }
+         * @default {}
+         */
+        headers?: undefined | StandardHeaders;
+        /**
+         * The JSON-parsed body of the request.
+         */
+        body?: undefined | StandardBody;
+    };
+}
+/**
+ * Delivers the response from server to client.
+ *
+ * Always the first message in responding lifecycle.
+ */
+interface PeerResponseMessage extends PeerMessage {
+    /**
+     * Message kind.
+     */
+    kind: 'response';
+    /**
+     * Response payload.
+     */
+    json: {
+        /**
+         * @example 200, 404, 500, etc.
+         * @default 200
+         */
+        status?: undefined | number;
+        /**
+         * @example { 'set-cookie': ['sessionId=abc123; HttpOnly'] }
+         * @default {}
+         */
+        headers?: undefined | StandardHeaders;
+        /**
+         * The JSON-parsed body of the response.
+         */
+        body?: undefined | StandardBody;
+    };
+}
+/**
+ * Cancels or aborts a request, response, or stream.
+ *
+ * - **Client → Server**: Cancel an in-flight request or stop consuming a stream.
+ * - **Server → Client**: Signal an error or premature termination.
+ */
+interface PeerCancelMessage extends PeerMessage {
+    /**
+     * Message kind.
+     */
+    kind: 'cancel';
+    /**
+     * Cancel messages carry no JSON payload.
+     */
+    json?: undefined;
+    /**
+     * Cancel messages carry no binary payload.
+     */
+    binary?: undefined;
+}
+/**
+ * Carries one event in an event stream.
+ *
+ * Direction depends on which side owns the async iterator.
+ * Must be sent after the owning request or response message has been exchanged.
+ */
+interface PeerEventStreamMessage extends PeerMessage {
+    /**
+     * Message kind.
+     */
+    kind: 'event-stream';
+    /**
+     * Event payload. `data` is left as `unknown` so it can be decoded by the receiver.
+     */
+    json: EventMeta & {
+        /**
+         * Kind of event
+         *
+         * @default 'message'
+         */
+        event?: undefined | 'message' | 'error' | 'close';
+        /**
+         * Event data.
+         */
+        data?: unknown;
+    };
+    /**
+     * Event-stream messages carry no binary payload.
+     */
+    binary?: undefined;
+}
+/**
+ * Carries one binary chunk in an octet stream.
+ *
+ * Direction depends on which side owns the stream.
+ * Must be sent after the owning request or response message has been exchanged.
+ */
+interface PeerOctetStreamMessage extends PeerMessage {
+    /**
+     * Message kind.
+     */
+    kind: 'octet-stream';
+    /**
+     * Stream metadata. `close` marks the final chunk.
+     *
+     * @default false
+     */
+    json: {
+        /**
+         * Marks the final chunk of the stream.
+         *
+         * @default false
+         */
+        close?: boolean;
+    };
+    /**
+     * Binary chunk. Should be present even when `close` is `true`.
+     */
+    binary?: Uint8Array<ArrayBuffer> | Blob | undefined;
+}
+/**
+ * Tells the remote peer to stop sending octet-stream or event-stream messages.
+ *
+ * Sent by the side that no longer needs more stream data.
+ */
+interface PeerStreamCancelMessage extends PeerMessage {
+    /**
+     * Message kind.
+     */
+    kind: 'stream/cancel';
+    /**
+     * Stream-cancel messages carry no JSON payload.
+     */
+    json?: undefined;
+    /**
+     * Stream-cancel messages carry no binary payload.
+     */
+    binary?: undefined;
+}
+/**
+ * Messages a client peer may send to a server peer.
+ */
+type ClientPeerSendMessage = PeerRequestMessage | PeerCancelMessage | PeerEventStreamMessage | PeerOctetStreamMessage;
+/**
+ * Messages a server peer may send to a client peer.
+ */
+type ServerPeerSendMessage = PeerResponseMessage | PeerCancelMessage | PeerOctetStreamMessage | PeerEventStreamMessage | PeerStreamCancelMessage;
+
+declare class ClientPeer {
+    private readonly send;
+    private readonly idGenerator;
+    private readonly requests;
+    constructor(send: (message: ClientPeerSendMessage) => Promise<void>);
+    /**
+     * Send a request to the server peer
+     */
+    request(request: StandardRequest): Promise<StandardLazyResponse>;
+    private transmitRequest;
+    /**
+     * Handle a message from server
+     */
+    message(message: ServerPeerSendMessage): Promise<void>;
+    close(reason?: unknown): Promise<void>;
+    private closeById;
+    private abortById;
+}
+
+interface EncodePeerMessageOptions {
+    /**
+     * Optional string prepended to the encoded message.
+     * Used to distinguish messages when multiple protocols share the same peer.
+     */
+    prefix?: string;
+}
+/**
+ * Encodes a {@link PeerMessage} into a wire-safe representation.
+ *
+ * Encoding rules:
+ * - If no binary payload is present, the message is encoded as a JSON string.
+ * - If binary data exists, the output layout is:
+ *
+ *   [ UTF-8 (prefix + JSON) | delimiter byte | raw binary bytes ]
+ *
+ * The optional prefix is prepended to the JSON portion before encoding.
+ */
+declare function encodePeerMessage(message: PeerMessage, options?: EncodePeerMessageOptions): Promise<string | Uint8Array<ArrayBuffer>>;
+interface DecodePeerMessageOptions {
+    /**
+     * Optional prefix expected at the start of the encoded message.
+     * If present and the message does not start with this prefix,
+     * the decoder returns `matched: false`.
+     */
+    prefix?: string;
+}
+/**
+ * Result of a decode attempt.
+ *
+ * - `matched: false` indicates the input does not belong to this decoder
+ *   (typically due to a prefix mismatch).
+ * - `matched: true` indicates successful decoding of a {@link PeerMessage}.
+ */
+type DecodePeerMessageResult = {
+    matched: false;
+    message?: undefined;
+} | {
+    matched: true;
+    message: PeerMessage;
+};
+/**
+ * Decodes a wire-encoded {@link PeerMessage}.
+ *
+ * Decoding rules:
+ * - String input is treated as a JSON-only message.
+ * - Binary input may contain:
+ *   - JSON only, or
+ *   - JSON followed by binary data separated by the delimiter byte.
+ *
+ * If a prefix is provided, it must be present at the start of the payload
+ * or the decode attempt will return `matched: false`.
+ */
+declare function decodePeerMessage(encoded: string | Uint8Array<ArrayBuffer>, options?: DecodePeerMessageOptions): DecodePeerMessageResult;
+
+declare function toAsyncIteratorObject(queue: Queue<PeerEventStreamMessage>, cleanup: AsyncCleanupFn): AsyncIteratorClass<unknown>;
+declare class EventStreamTransmitter {
+    private readonly iterator;
+    private readonly messageId;
+    private readonly send;
+    private isDone;
+    constructor(iterator: AsyncIterator<unknown>, messageId: string, send: (message: PeerEventStreamMessage) => Promise<void>);
+    cancel(): Promise<void>;
+    transmit(): Promise<void>;
+}
+
+interface HibernationAsyncIteratorClassCallback {
+    (id: string): void | Promise<void>;
+}
+declare class HibernationAsyncIteratorClass<T, TReturn = unknown, TNext = unknown> extends AsyncIteratorClass<T, TReturn, TNext> {
+    /**
+     * Optional because `AsyncIteratorClass` does not define this property.
+     * The client library represents server results as `AsyncIteratorClass` instances.
+     */
+    readonly '~callback'?: HibernationAsyncIteratorClassCallback;
+    constructor(callback: HibernationAsyncIteratorClassCallback);
+}
+
+declare class ServerPeer {
+    private readonly send;
+    private readonly requests;
+    constructor(send: (message: ServerPeerSendMessage) => Promise<void>);
+    /**
+     * Handle a message from client
+     */
+    message(message: ClientPeerSendMessage, handleRequest: (request: StandardLazyRequest) => Promise<StandardResponse>): Promise<void>;
+    close(reason?: unknown): Promise<void>;
+    private closeById;
+    private cancelById;
+}
+
+declare function isPeerMessage(maybe: unknown): maybe is PeerMessage;
+declare function isPeerRequestMessage(maybe: PeerMessage): maybe is PeerRequestMessage;
+declare function isPeerResponseMessage(maybe: PeerMessage): maybe is PeerResponseMessage;
+declare function isPeerCancelMessage(maybe: PeerMessage): maybe is PeerCancelMessage;
+declare function isPeerEventStreamMessage(maybe: PeerMessage): maybe is PeerEventStreamMessage;
+declare function isPeerOctetStreamMessage(maybe: PeerMessage): maybe is PeerOctetStreamMessage;
+declare function isPeerStreamCancelMessage(maybe: PeerMessage): maybe is PeerStreamCancelMessage;
+declare function isClientPeerSendMessage(maybe: PeerMessage): maybe is ClientPeerSendMessage;
+declare function isServerPeerSendMessage(maybe: PeerMessage): maybe is ServerPeerSendMessage;
+
+export { ClientPeer, EventStreamTransmitter, HibernationAsyncIteratorClass, ServerPeer, decodePeerMessage, encodePeerMessage, isClientPeerSendMessage, isPeerCancelMessage, isPeerEventStreamMessage, isPeerMessage, isPeerOctetStreamMessage, isPeerRequestMessage, isPeerResponseMessage, isPeerStreamCancelMessage, isServerPeerSendMessage, toAsyncIteratorObject };
+export type { ClientPeerSendMessage, DecodePeerMessageOptions, DecodePeerMessageResult, EncodePeerMessageOptions, HibernationAsyncIteratorClassCallback, PeerCancelMessage, PeerEventStreamMessage, PeerMessage, PeerOctetStreamMessage, PeerRequestMessage, PeerResponseMessage, PeerStreamCancelMessage, ServerPeerSendMessage };

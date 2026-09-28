@@ -1,0 +1,11 @@
+import { A11yDevtoolsPanel } from "./A11yDevtools.js";
+import { createSolidPlugin } from "@tanstack/devtools-utils/solid";
+//#region src/solid/production/plugin.ts
+var [a11yDevtoolsPlugin] = createSolidPlugin({
+	name: "TanStack A11y",
+	Component: A11yDevtoolsPanel
+});
+//#endregion
+export { a11yDevtoolsPlugin };
+
+//# sourceMappingURL=plugin.js.map

@@ -1,0 +1,6 @@
+# Issue templates.
+#
+# `blank_issues_enabled: false` routes every report through a form, which is
+# what makes the fields below reliably present. Add a `contact_links` block
+# here if contributors should also reach a chat or discussion board.
+blank_issues_enabled: false

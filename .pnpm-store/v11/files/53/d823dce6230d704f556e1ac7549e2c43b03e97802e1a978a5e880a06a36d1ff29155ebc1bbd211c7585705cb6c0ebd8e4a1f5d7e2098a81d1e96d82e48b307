@@ -1,0 +1,91 @@
+import { StandardBodyHint, StandardBody, StandardHeaders, StandardMethod, StandardLazyRequest, StandardResponse, StandardUrl } from '@standard-server/core';
+import { ToEventStreamOptions as ToEventStreamOptions$1 } from '@standard-server/fetch';
+import { AsyncIteratorClass } from '@standard-server/shared';
+import Stream, { Readable } from 'node:stream';
+import { IncomingMessage, ServerResponse } from 'node:http';
+import { Http2ServerRequest, Http2ServerResponse } from 'node:http2';
+
+declare function toAsyncIteratorObject(stream: Readable): AsyncIteratorClass<unknown>;
+interface ToEventStreamOptions extends ToEventStreamOptions$1 {
+}
+declare function toEventStream(iterator: AsyncIterator<unknown | void, unknown | void, void>, options?: ToEventStreamOptions): Readable;
+
+type NodeHttpRequest = (IncomingMessage | Http2ServerRequest) & {
+    /**
+     * Prefer `originalUrl` over `url` if it is available.
+     */
+    originalUrl?: string;
+    /**
+     * Body might already parsed by upstream framework like express.js, ...
+     */
+    body?: unknown;
+};
+type NodeHttpResponse = ServerResponse | Http2ServerResponse;
+
+interface ToStandardBodyOptions {
+    /**
+     * Hints on how the body should be parsed.
+     */
+    hint?: StandardBodyHint | undefined;
+}
+/**
+ * Parses the body of a node http request.
+ */
+declare function toStandardBody(req: NodeHttpRequest, options?: ToStandardBodyOptions): Promise<StandardBody>;
+interface ToNodeHttpBodyOptions {
+    /**
+     * Options for the event stream, like keep-alive settings, initial comment, etc.
+     */
+    eventStream?: ToEventStreamOptions;
+}
+/**
+ * Convert a standard body to a node http body.
+ *
+ * Binary bodies (Blob, ReadableStream) can override the aut-set standard-server header,
+ * enabling pre-encoded body transmission while preserving client-side type interpretation.
+ */
+declare function toNodeHttpBody(body: StandardBody, headers: StandardHeaders, options?: ToNodeHttpBodyOptions): [
+    body: Readable | undefined | string,
+    headers: StandardHeaders
+];
+
+declare function toStandardMethod(method: string | undefined): StandardMethod;
+
+declare function toStandardLazyRequest(req: NodeHttpRequest, res: NodeHttpResponse): StandardLazyRequest;
+
+interface SendStandardResponseOptions extends ToNodeHttpBodyOptions {
+}
+declare function sendStandardResponse(res: NodeHttpResponse, standardResponse: StandardResponse, options?: SendStandardResponseOptions): Promise<void>;
+
+declare function toAbortSignal(stream: Stream.Writable | NodeHttpResponse): AbortSignal;
+
+declare function toStandardUrl(req: Pick<NodeHttpRequest, 'originalUrl' | 'url'>): StandardUrl;
+
+/**
+ * A cancel-safe alternative to `Readable.toWeb`.
+ *
+ * Node's adapter enqueues from `'data'` events, so a chunk arriving after the
+ * consumer cancels hits a closed controller and crashes the process with an
+ * uncaught `ERR_INVALID_STATE` (nodejs/node#54205) — on some Node releases even
+ * through an intermediate `TransformStream`. Pulling through the stream's async
+ * iterator makes that impossible: chunks are only enqueued inside `pull`, never
+ * after cancel. The per-chunk copy detaches chunks from Node's pooled `Buffer`
+ * memory.
+ *
+ * Cancel destroys the source, except http1 server requests: they share their
+ * socket with the response, so destroying them would kill an in-flight
+ * response. They are abandoned instead — stalled by backpressure and reclaimed
+ * on connection teardown.
+ */
+declare function toWebReadableStream(stream: Readable): ReadableStream<Uint8Array<ArrayBuffer>>;
+/**
+ * Check both the response itself and its underlying stream (http2) are still writable.
+ */
+declare function canWriteToNodeResponse(res: Stream.Writable | NodeHttpResponse): boolean;
+/**
+ * Get the error of the response, preferring its underlying stream's (http2).
+ */
+declare function getNodeResponseError(res: Stream.Writable | NodeHttpResponse): Error | null;
+
+export { canWriteToNodeResponse, getNodeResponseError, sendStandardResponse, toAbortSignal, toAsyncIteratorObject, toEventStream, toNodeHttpBody, toStandardBody, toStandardLazyRequest, toStandardMethod, toStandardUrl, toWebReadableStream };
+export type { NodeHttpRequest, NodeHttpResponse, SendStandardResponseOptions, ToEventStreamOptions, ToNodeHttpBodyOptions, ToStandardBodyOptions };

@@ -1,0 +1,8 @@
+import "svelte/internal/disclose-version";
+import "svelte/internal/client";
+//#region src/svelte/NoOp.svelte
+function NoOp($$anchor) {}
+//#endregion
+export { NoOp as default };
+
+//# sourceMappingURL=NoOp.js.map

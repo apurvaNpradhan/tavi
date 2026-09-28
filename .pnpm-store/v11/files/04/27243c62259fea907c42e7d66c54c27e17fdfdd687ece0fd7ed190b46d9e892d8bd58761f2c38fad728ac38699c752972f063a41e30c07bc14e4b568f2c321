@@ -1,0 +1,845 @@
+import { toArray, value, splitInHalf, safeEncodeURIComponent, stringifyJSON, once, isAsyncIteratorObject, defer, loadBytes, allAbortSignal, replicateAsyncIterator, replicateReadableStream, isCompressibleContentType, override, AsyncIteratorClass, sleep, AbortError, anyAbortSignal } from '@orpc/shared';
+import { parseStandardUrl, flattenStandardHeader, generateContentDisposition, getEventMeta } from '@standard-server/core';
+import { ClientPeer, isServerPeerSendMessage, decodePeerMessage } from '@standard-server/peer';
+import { toFetchHeaders, toStandardBody } from '@standard-server/fetch';
+import { C as COMMON_ERROR_STATUS_MAP } from '../shared/client.Dtv1JPkU.mjs';
+
+class BatchLinkPlugin {
+  name = "~batch";
+  groups;
+  filter;
+  maxSize;
+  mode;
+  batchUrl;
+  maxUrlLength;
+  batchHeaders;
+  mapSubrequest;
+  mapSubresponse;
+  queue = /* @__PURE__ */ new Map();
+  constructor(options) {
+    this.groups = options.groups;
+    this.filter = options.filter ?? (() => true);
+    this.maxSize = options.maxSize ?? 10;
+    this.mode = options.mode ?? "streaming";
+    this.batchUrl = options.url ?? ((options2) => {
+      const [pathname] = parseStandardUrl(options2[0].request.url);
+      return `${pathname}/__batch__`;
+    });
+    this.maxUrlLength = options.maxUrlLength ?? 2083;
+    this.batchHeaders = options.headers ?? (async (options2) => {
+      const headersList = options2.map((o) => o.request.headers);
+      const commonHeaders = {};
+      for (const headers of headersList) {
+        for (const key of Object.keys(headers)) {
+          const value2 = headers[key];
+          if (headersList.every((h) => h[key] === value2)) {
+            commonHeaders[key] = value2;
+          }
+        }
+      }
+      return commonHeaders;
+    });
+    this.mapSubrequest = options.mapSubrequest ?? (({ request }, { headers }) => {
+      const subHeaders = { ...request.headers };
+      for (const key of Object.keys(headers)) {
+        const value2 = headers[key];
+        if (subHeaders[key] === value2) {
+          subHeaders[key] = void 0;
+        }
+      }
+      return {
+        ...request,
+        headers: subHeaders
+      };
+    });
+    this.mapSubresponse = options.mapSubresponse ?? ((subResponse, batchResponse) => {
+      return {
+        ...subResponse,
+        headers: {
+          ...batchResponse.headers,
+          // low-priority
+          ...subResponse.headers
+        }
+      };
+    });
+  }
+  init(options) {
+    const transportInterceptor = async (interceptorOptions) => {
+      if (interceptorOptions.request.body instanceof Blob || interceptorOptions.request.body instanceof ReadableStream || isAsyncIteratorObject(interceptorOptions.request.body) || interceptorOptions.request.signal?.aborted || !value(this.filter, interceptorOptions)) {
+        return interceptorOptions.next();
+      }
+      const group = this.groups.find((group2) => value(group2.condition, interceptorOptions));
+      if (!group) {
+        return interceptorOptions.next();
+      }
+      return new Promise((resolve, reject) => {
+        const queue = this.queue.get(group) ?? [];
+        if (!this.queue.has(group)) {
+          this.queue.set(group, queue);
+        }
+        queue.push([interceptorOptions, resolve, reject]);
+        defer(() => this.processPendingBatches());
+      });
+    };
+    return {
+      ...options,
+      transportInterceptors: [...toArray(options.transportInterceptors), transportInterceptor]
+    };
+  }
+  async processPendingBatches() {
+    const pending = new Map(this.queue);
+    this.queue.clear();
+    for (const [group, items] of pending) {
+      const getItems = items.filter(([options]) => options.request.method === "GET");
+      const queryItems = items.filter(([options]) => options.request.method === "QUERY");
+      const unsafeItems = items.filter(([options]) => options.request.method !== "GET" && options.request.method !== "QUERY");
+      this.executeBatch("GET", group, getItems);
+      this.executeBatch("QUERY", group, queryItems);
+      this.executeBatch("POST", group, unsafeItems);
+    }
+  }
+  async executeBatch(method, group, groupItems) {
+    if (!groupItems.length) {
+      return;
+    }
+    if (groupItems.length === 1) {
+      const [options, resolve, reject] = groupItems[0];
+      options.next().then(resolve).catch(reject);
+      return;
+    }
+    const subOptionsList = groupItems.map(([options]) => options);
+    const maxSize = await value(this.maxSize, subOptionsList);
+    if (groupItems.length > maxSize) {
+      const [first, second] = splitInHalf(groupItems);
+      await Promise.all([
+        this.executeBatch(method, group, first),
+        this.executeBatch(method, group, second)
+      ]);
+      return;
+    }
+    const url = await value(this.batchUrl, subOptionsList);
+    const headers = await value(this.batchHeaders, subOptionsList);
+    const mode = value(this.mode, subOptionsList);
+    let suppressErrorFromCurrentBatch = false;
+    const controller = new AbortController();
+    const pendingMessages = [];
+    let batchResponse;
+    const peer = new ClientPeer(async (message) => {
+      pendingMessages.push(message);
+      if (message.kind === "cancel" && pendingMessages.filter((m) => m.kind === "cancel").length === groupItems.length) {
+        controller.abort();
+      }
+      if (message.kind === "request" && pendingMessages.filter((m) => m.kind === "request").length === groupItems.length) {
+        (async () => {
+          try {
+            const request = {
+              url,
+              method,
+              headers: { ...headers, "orpc-batch": mode },
+              signal: controller.signal
+            };
+            if (method === "GET") {
+              const [pathname, search, hash] = parseStandardUrl(url);
+              const dataParam = `data=${safeEncodeURIComponent(stringifyJSON(pendingMessages))}`;
+              const newUrl = search ? `${pathname}${search}&${dataParam}${hash ?? ""}` : `${pathname}?${dataParam}${hash ?? ""}`;
+              const maxUrlLength = await value(this.maxUrlLength, subOptionsList);
+              if (newUrl.length > maxUrlLength) {
+                const [first, second] = splitInHalf(groupItems);
+                suppressErrorFromCurrentBatch = true;
+                await Promise.all([
+                  this.executeBatch(method, group, first),
+                  this.executeBatch(method, group, second),
+                  peer.close()
+                ]);
+                return;
+              }
+              request.url = newUrl;
+            } else {
+              request.body = pendingMessages;
+            }
+            batchResponse = await groupItems[0][0].next({
+              ...subOptionsList[0],
+              context: value(group.context, subOptionsList),
+              path: value(group.path, subOptionsList) ?? [],
+              request,
+              signal: controller.signal
+            });
+            if (batchResponse.status >= 400) {
+              suppressErrorFromCurrentBatch = true;
+              const resolveBody = once(() => batchResponse.resolveBody());
+              const errorResponse = { ...batchResponse, resolveBody };
+              groupItems.forEach(([subOptions, resolve]) => {
+                resolve(this.mapSubresponse(errorResponse, batchResponse, subOptions));
+              });
+              await peer.close();
+              return;
+            }
+            const body = await batchResponse.resolveBody();
+            if (Array.isArray(body) && body.every((v) => isServerPeerSendMessage(v))) {
+              for (const message2 of body) {
+                await peer.message(message2);
+              }
+            } else if (body instanceof Blob) {
+              await decodeLengthPrefixedBlob(body, peer);
+            } else if (body instanceof ReadableStream) {
+              await decodeLengthPrefixedStream(body, peer);
+            } else {
+              throw new TypeError("Invalid batch response format.");
+            }
+            await peer.close(new TypeError("Batch response is incomplete."));
+          } catch (error) {
+            await peer.close(error);
+          }
+        })();
+      }
+    });
+    groupItems.forEach(([subOptions, resolve, reject]) => {
+      peer.request(this.mapSubrequest(subOptions, { url, headers })).then((subResponse) => resolve(this.mapSubresponse(subResponse, batchResponse, subOptions))).catch((error) => {
+        if (!suppressErrorFromCurrentBatch) {
+          reject(error);
+        }
+      });
+    });
+  }
+}
+async function decodeLengthPrefixedBlob(blob, peer) {
+  const buffer = await loadBytes(blob);
+  let offset = 0;
+  while (offset < buffer.length) {
+    if (offset + 4 > buffer.length) {
+      throw new TypeError("Invalid batch response: incomplete length header.");
+    }
+    const view = new DataView(buffer.buffer, buffer.byteOffset + offset, 4);
+    const length = view.getUint32(0, false);
+    offset += 4;
+    if (offset + length > buffer.length) {
+      throw new TypeError("Invalid batch response: incomplete message.");
+    }
+    const messageBytes = buffer.subarray(offset, offset + length);
+    offset += length;
+    const result = decodePeerMessage(messageBytes);
+    if (!result.matched || !isServerPeerSendMessage(result.message)) {
+      throw new TypeError("Invalid batch response: invalid message.");
+    }
+    await peer.message(result.message);
+  }
+}
+async function decodeLengthPrefixedStream(stream, peer) {
+  const reader = stream.getReader();
+  let buffer = new Uint8Array(0);
+  try {
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (chunk) {
+        const newBuffer = new Uint8Array(buffer.length + chunk.length);
+        newBuffer.set(buffer);
+        newBuffer.set(chunk, buffer.length);
+        buffer = newBuffer;
+      }
+      while (buffer.length >= 4) {
+        const view = new DataView(buffer.buffer, buffer.byteOffset, 4);
+        const length = view.getUint32(0, false);
+        if (length === 0) {
+          buffer = buffer.subarray(4);
+          continue;
+        }
+        if (buffer.length < 4 + length) {
+          break;
+        }
+        const messageBytes = buffer.subarray(4, 4 + length);
+        buffer = buffer.subarray(4 + length);
+        const result = decodePeerMessage(messageBytes);
+        if (!result.matched || !isServerPeerSendMessage(result.message)) {
+          throw new TypeError("Invalid batch response: invalid message.");
+        }
+        await peer.message(result.message);
+      }
+      if (done) {
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+class DedupeLinkPlugin {
+  name = "~dedupe";
+  before = ["~batch"];
+  groups;
+  filter;
+  queue = /* @__PURE__ */ new Map();
+  constructor(options) {
+    this.groups = options.groups;
+    this.filter = options.filter ?? (({ request }) => request.method === "GET" || request.method === "QUERY");
+  }
+  init(options) {
+    const transportInterceptor = (interceptorOptions) => {
+      if (!canDedupeRequest(interceptorOptions.request) || !value(this.filter, interceptorOptions)) {
+        return interceptorOptions.next();
+      }
+      const group = this.groups.find((group2) => value(group2.condition, interceptorOptions));
+      if (!group) {
+        return interceptorOptions.next();
+      }
+      return new Promise((resolve, reject) => {
+        this.enqueue(group, interceptorOptions, resolve, reject);
+        defer(() => {
+          this.processPendingRequests();
+        });
+      });
+    };
+    return {
+      ...options,
+      transportInterceptors: [...toArray(options.transportInterceptors), transportInterceptor]
+    };
+  }
+  enqueue(group, options, resolve, reject) {
+    let queue = this.queue.get(group);
+    if (!queue) {
+      queue = [];
+      this.queue.set(group, queue);
+    }
+    const requestKey = createRequestKey(options.path, options.request);
+    const matched = queue.find((item) => item.requestKey === requestKey);
+    if (matched) {
+      matched.matchedOptions.push(options);
+      matched.signals.push(options.request.signal);
+      matched.resolves.push(resolve);
+      matched.rejects.push(reject);
+      return;
+    }
+    queue.push({
+      requestKey,
+      options,
+      matchedOptions: [options],
+      signals: [options.request.signal],
+      resolves: [resolve],
+      rejects: [reject]
+    });
+  }
+  async processPendingRequests() {
+    const pending = new Map(this.queue);
+    this.queue.clear();
+    const executions = [];
+    for (const [group, items] of pending) {
+      for (const item of items) {
+        executions.push(this.execute(group, item));
+      }
+    }
+    await Promise.all(executions);
+  }
+  async execute(group, item) {
+    try {
+      if (!shouldDedupe(item.matchedOptions)) {
+        const response2 = await item.options.next(item.options);
+        item.resolves[0]?.(response2);
+        return;
+      }
+      const context = value(group.context, item.matchedOptions);
+      const request = {
+        ...item.options.request,
+        signal: allAbortSignal(item.signals)
+      };
+      const response = await item.options.next({
+        ...item.options,
+        request,
+        signal: request.signal,
+        context
+      });
+      const replicatedResponses = replicateLazyResponse(response, item.resolves.length);
+      for (const resolve of item.resolves) {
+        resolve(replicatedResponses.pop());
+      }
+    } catch (error) {
+      for (const reject of item.rejects) {
+        reject(error);
+      }
+    }
+  }
+}
+function canDedupeRequest(request) {
+  return !(request.body instanceof Blob || request.body instanceof FormData || request.body instanceof URLSearchParams || request.body instanceof ReadableStream || isAsyncIteratorObject(request.body) || request.signal?.aborted);
+}
+function createRequestKey(path, request) {
+  return stringifyJSON({
+    path,
+    body: request.body,
+    headers: request.headers,
+    method: request.method,
+    url: request.url
+  });
+}
+function replicateLazyResponse(response, count) {
+  const replicated = [];
+  let bodyPromise;
+  let replicatedAsyncIterators;
+  let replicatedReadableStream;
+  for (let i = 0; i < count; i++) {
+    let resolvedBody;
+    replicated.push({
+      ...response,
+      resolveBody: async (hint) => {
+        if (resolvedBody) {
+          return resolvedBody.body;
+        }
+        bodyPromise ??= response.resolveBody(hint);
+        const body = await bodyPromise;
+        if (isAsyncIteratorObject(body)) {
+          replicatedAsyncIterators ??= replicateAsyncIterator(body, count);
+          resolvedBody = { body: replicatedAsyncIterators.pop() };
+        } else if (body instanceof ReadableStream) {
+          replicatedReadableStream ??= replicateReadableStream(body, count);
+          resolvedBody = { body: replicatedReadableStream.pop() };
+        } else {
+          resolvedBody = { body };
+        }
+        return resolvedBody.body;
+      }
+    });
+  }
+  return replicated;
+}
+function shouldDedupe(items) {
+  return items.length >= 2;
+}
+
+const AVG_BYTES_PER_CHAR = 1.2;
+class RequestCompressionLinkPlugin {
+  name = "~request-compression";
+  /**
+   * Compression should be done after batching, to compress the final request
+   */
+  after = ["~batch"];
+  encoding;
+  threshold;
+  isCompressibleContentType;
+  constructor(options = {}) {
+    this.encoding = options.encoding ?? "gzip";
+    this.threshold = options.threshold ?? 1024;
+    this.isCompressibleContentType = options.isCompressibleContentType ?? isCompressibleContentType;
+  }
+  init(options) {
+    const transportInterceptor = async ({ next, ...interceptorOptions }) => {
+      const request = interceptorOptions.request;
+      const contentEncoding = flattenStandardHeader(request.headers["content-encoding"])?.trim()?.toLowerCase();
+      if (contentEncoding !== void 0) {
+        return next();
+      }
+      if (request.body instanceof ReadableStream) {
+        const contentLength = Number(flattenStandardHeader(request.headers["content-length"]));
+        if ((!Number.isFinite(contentLength) || contentLength >= this.threshold) && this.isCompressibleContentType(flattenStandardHeader(request.headers["content-type"]), interceptorOptions)) {
+          const compressedStream = request.body.pipeThrough(new CompressionStream(this.encoding));
+          return next({
+            ...interceptorOptions,
+            request: {
+              ...interceptorOptions.request,
+              body: compressedStream,
+              headers: {
+                ...request.headers,
+                "standard-server": "octet-stream",
+                "content-length": [],
+                "content-encoding": this.encoding
+              }
+            }
+          });
+        }
+      } else if (request.body instanceof Blob) {
+        if ((!Number.isFinite(request.body.size) || request.body.size >= this.threshold) && this.isCompressibleContentType(request.body.type, interceptorOptions)) {
+          const compressedStream = request.body.stream().pipeThrough(new CompressionStream(this.encoding));
+          const contentDisposition = request.headers["content-disposition"] ?? generateContentDisposition(
+            request.body instanceof File ? request.body.name : "blob"
+          );
+          return next({
+            ...interceptorOptions,
+            request: {
+              ...interceptorOptions.request,
+              body: compressedStream,
+              headers: {
+                ...request.headers,
+                "standard-server": "file",
+                "content-type": request.body.type,
+                "content-length": [],
+                "content-disposition": contentDisposition,
+                "content-encoding": this.encoding
+              }
+            }
+          });
+        }
+      } else if (request.body instanceof FormData) {
+        const PART_OVERHEAD = 64;
+        let contentLength = 0;
+        for (const [key, value] of request.body) {
+          contentLength += PART_OVERHEAD + key.length;
+          if (value instanceof Blob) {
+            if (!Number.isFinite(value.size)) {
+              if (!this.isCompressibleContentType(value.type, interceptorOptions)) {
+                contentLength = -Infinity;
+                break;
+              }
+              contentLength = Infinity;
+            } else {
+              contentLength += this.isCompressibleContentType(value.type, interceptorOptions) ? value.size : -value.size;
+            }
+          } else {
+            contentLength += value.length * AVG_BYTES_PER_CHAR;
+          }
+        }
+        if (contentLength >= this.threshold) {
+          const res = new Response(request.body);
+          const compressedStream = res.body.pipeThrough(new CompressionStream(this.encoding));
+          return next({
+            ...interceptorOptions,
+            request: {
+              ...interceptorOptions.request,
+              body: compressedStream,
+              headers: {
+                ...request.headers,
+                "standard-server": [],
+                "content-type": res.headers.get("content-type"),
+                "content-length": [],
+                "content-encoding": this.encoding
+              }
+            }
+          });
+        }
+      } else if (request.body instanceof URLSearchParams) {
+        const string = request.body.toString();
+        if (string.length * AVG_BYTES_PER_CHAR >= this.threshold) {
+          const compressedStream = new Blob([string]).stream().pipeThrough(new CompressionStream(this.encoding));
+          return next({
+            ...interceptorOptions,
+            request: {
+              ...interceptorOptions.request,
+              body: compressedStream,
+              headers: {
+                ...request.headers,
+                "standard-server": [],
+                "content-type": "application/x-www-form-urlencoded",
+                "content-length": [],
+                "content-encoding": this.encoding
+              }
+            }
+          });
+        }
+      } else if (request.body !== void 0 && !isAsyncIteratorObject(request.body)) {
+        const string = stringifyJSON(request.body);
+        if (string.length * AVG_BYTES_PER_CHAR >= this.threshold) {
+          const compressedStream = new Blob([string]).stream().pipeThrough(new CompressionStream(this.encoding));
+          return next({
+            ...interceptorOptions,
+            request: {
+              ...interceptorOptions.request,
+              body: compressedStream,
+              headers: {
+                ...request.headers,
+                "standard-server": [],
+                "content-type": "application/json",
+                "content-length": [],
+                "content-encoding": this.encoding
+              }
+            }
+          });
+        }
+      }
+      return next();
+    };
+    return {
+      ...options,
+      transportInterceptors: [
+        ...toArray(options.transportInterceptors),
+        transportInterceptor
+      ]
+    };
+  }
+}
+
+class ResponseCompressionLinkPlugin {
+  name = "~response-compression";
+  /**
+   * Decompression should wrap the final batch response instead of sub-responses.
+   */
+  after = ["~batch"];
+  encodings;
+  constructor(options = {}) {
+    this.encodings = options.encodings ?? ["gzip", "deflate"];
+  }
+  init(options) {
+    const acceptEncodingHeader = this.encodings.join(", ");
+    const transportInterceptor = async ({ next, ...interceptorOptions }) => {
+      const response = await next({
+        ...interceptorOptions,
+        request: {
+          ...interceptorOptions.request,
+          headers: {
+            ...interceptorOptions.request.headers,
+            "accept-encoding": acceptEncodingHeader
+          }
+        }
+      });
+      const encodings = parseContentEncodings(
+        flattenStandardHeader(response.headers["content-encoding"])
+      );
+      if (encodings.length === 0 || !encodings.every(isSupportedEncoding)) {
+        return response;
+      }
+      const decompressedHeaders = {
+        ...response.headers,
+        "content-length": void 0,
+        "content-encoding": void 0
+      };
+      return {
+        ...response,
+        headers: decompressedHeaders,
+        async resolveBody(hint) {
+          const stream = await response.resolveBody("octet-stream");
+          if (!(stream instanceof ReadableStream)) {
+            return stream;
+          }
+          let decompressedStream = stream;
+          for (let i = encodings.length - 1; i >= 0; i--) {
+            decompressedStream = decompressedStream.pipeThrough(
+              new DecompressionStream(encodings[i])
+            );
+          }
+          const fetchResponse = new Response(decompressedStream, {
+            headers: toFetchHeaders(decompressedHeaders)
+          });
+          return toStandardBody(fetchResponse, { hint });
+        }
+      };
+    };
+    return {
+      ...options,
+      transportInterceptors: [
+        ...toArray(options.transportInterceptors),
+        transportInterceptor
+      ]
+    };
+  }
+}
+const SUPPORTED_ENCODINGS = ["gzip", "deflate", "deflate-raw"];
+function isSupportedEncoding(encoding) {
+  return SUPPORTED_ENCODINGS.includes(encoding);
+}
+function parseContentEncodings(header) {
+  if (header === void 0) {
+    return [];
+  }
+  return header.split(",").map((part) => part.trim().toLowerCase());
+}
+
+class RetryLinkPlugin {
+  defaultRetry;
+  defaultRetryDelay;
+  defaultShouldRetry;
+  defaultOnRetry;
+  name = "~retry";
+  constructor(options = {}) {
+    this.defaultRetry = options.default?.retry ?? 0;
+    this.defaultRetryDelay = options.default?.retryDelay ?? ((o) => o.lastEventRetry ?? 2e3);
+    this.defaultShouldRetry = options.default?.shouldRetry ?? true;
+    this.defaultOnRetry = options.default?.onRetry;
+  }
+  init(options) {
+    const interceptor = async (interceptorOptions) => {
+      const { next, ...callOptions } = interceptorOptions;
+      const maxAttempts = await value(
+        callOptions.context.retry ?? this.defaultRetry,
+        callOptions
+      );
+      const retryDelay = callOptions.context.retryDelay ?? this.defaultRetryDelay;
+      const shouldRetry = callOptions.context.shouldRetry ?? this.defaultShouldRetry;
+      const onRetry = callOptions.context.onRetry ?? this.defaultOnRetry;
+      if (maxAttempts <= 0) {
+        return next(callOptions);
+      }
+      let lastEventId = callOptions.lastEventId;
+      let lastEventRetry;
+      let callback;
+      let attempt = 1;
+      const callNext = async (initialError) => {
+        let currentError = initialError;
+        while (true) {
+          const updatedCallOptions = { ...callOptions, lastEventId };
+          if (currentError) {
+            if (attempt > maxAttempts) {
+              throw currentError.error;
+            }
+            const attemptOptions = {
+              ...updatedCallOptions,
+              attempt,
+              error: currentError.error,
+              lastEventRetry
+            };
+            const shouldRetryBool = await value(
+              shouldRetry,
+              attemptOptions
+            );
+            if (!shouldRetryBool) {
+              throw currentError.error;
+            }
+            callback = onRetry?.(attemptOptions);
+          }
+          try {
+            if (currentError) {
+              const retryDelayMs = await value(retryDelay, {
+                ...updatedCallOptions,
+                attempt,
+                error: currentError.error,
+                lastEventRetry
+              });
+              await sleep(retryDelayMs, { signal: updatedCallOptions.signal });
+              attempt++;
+            }
+            currentError = void 0;
+            return await next(updatedCallOptions);
+          } catch (error) {
+            currentError = { error };
+            if (updatedCallOptions.signal?.aborted) {
+              throw error;
+            }
+          } finally {
+            callback?.(!currentError);
+            callback = void 0;
+          }
+        }
+      };
+      const output = await callNext();
+      if (!isAsyncIteratorObject(output)) {
+        return output;
+      }
+      let current = output;
+      let isIteratorAborted = false;
+      return override(() => current, new AsyncIteratorClass(
+        async () => {
+          while (true) {
+            try {
+              const item = await current.next();
+              const meta = getEventMeta(item.value);
+              lastEventId = meta?.id ?? lastEventId;
+              lastEventRetry = meta?.retry ?? lastEventRetry;
+              return item;
+            } catch (error) {
+              const meta = getEventMeta(error);
+              lastEventId = meta?.id ?? lastEventId;
+              lastEventRetry = meta?.retry ?? lastEventRetry;
+              const asyncIteratorObject = await callNext({ error });
+              if (!isAsyncIteratorObject(asyncIteratorObject)) {
+                throw new TypeError(
+                  "RetryLinkPlugin: Expected an AsyncIteratorObject, got a different type."
+                );
+              }
+              current = asyncIteratorObject;
+              if (isIteratorAborted) {
+                await current.return?.();
+                throw error;
+              }
+            }
+          }
+        },
+        async ({ kind }) => {
+          isIteratorAborted = true;
+          if (kind === "cancelled") {
+            await current.return?.();
+          }
+        }
+      ));
+    };
+    return { ...options, interceptors: [interceptor, ...toArray(options.interceptors)] };
+  }
+}
+
+class RetryAfterLinkPlugin {
+  condition;
+  maxAttempts;
+  timeout;
+  name = "~retry-after";
+  constructor(options = {}) {
+    this.condition = options.condition ?? ((response) => response.status === COMMON_ERROR_STATUS_MAP.TOO_MANY_REQUESTS || response.status === COMMON_ERROR_STATUS_MAP.SERVICE_UNAVAILABLE);
+    this.maxAttempts = options.maxAttempts ?? 3;
+    this.timeout = options.timeout ?? 5 * 60 * 1e3;
+  }
+  init(options) {
+    const interceptor = async (interceptorOptions) => {
+      const startTime = Date.now();
+      let attemptCount = 0;
+      while (true) {
+        attemptCount++;
+        const response = await interceptorOptions.next();
+        if (!value(this.condition, response, interceptorOptions)) {
+          return response;
+        }
+        const retryAfterHeader = flattenStandardHeader(response.headers["retry-after"]);
+        const retryAfterMs = parseRetryAfterHeader(retryAfterHeader);
+        if (retryAfterMs === void 0) {
+          return response;
+        }
+        if (attemptCount >= value(this.maxAttempts, response, interceptorOptions)) {
+          return response;
+        }
+        const timeoutMs = value(this.timeout, response, interceptorOptions);
+        const elapsedTime = Date.now() - startTime;
+        if (elapsedTime + retryAfterMs > timeoutMs) {
+          return response;
+        }
+        try {
+          await sleep(retryAfterMs, { signal: interceptorOptions.signal });
+        } catch {
+        }
+        if (interceptorOptions.signal?.aborted) {
+          return response;
+        }
+      }
+    };
+    return { ...options, transportInterceptors: [interceptor, ...toArray(options.transportInterceptors)] };
+  }
+}
+function parseRetryAfterHeader(value2) {
+  value2 = value2?.trim();
+  if (!value2) {
+    return void 0;
+  }
+  const seconds = Number(value2);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1e3);
+  }
+  const retryDate = Date.parse(value2);
+  if (!Number.isNaN(retryDate)) {
+    return Math.max(0, retryDate - Date.now());
+  }
+  return void 0;
+}
+
+class TimeoutLinkPlugin {
+  timeout;
+  name = "~timeout";
+  /**
+   * Should abort if the total retry time exceeds the configured timeout
+   */
+  after = ["~retry"];
+  constructor(options) {
+    this.timeout = options.timeout;
+  }
+  init(options) {
+    const interceptor = async (interceptorOptions) => {
+      const timeoutMs = value(this.timeout, interceptorOptions);
+      if (timeoutMs === null || timeoutMs === void 0) {
+        return interceptorOptions.next();
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort(new AbortError(`Request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const signal = anyAbortSignal([interceptorOptions.signal, controller.signal]);
+      try {
+        return await interceptorOptions.next({ ...interceptorOptions, signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+    return { ...options, interceptors: [interceptor, ...toArray(options.interceptors)] };
+  }
+}
+
+export { BatchLinkPlugin, RetryLinkPlugin as ClientRetryPlugin, DedupeLinkPlugin, DedupeLinkPlugin as DedupeRequestsPlugin, RequestCompressionLinkPlugin, ResponseCompressionLinkPlugin, RetryAfterLinkPlugin, RetryAfterLinkPlugin as RetryAfterPlugin, RetryLinkPlugin, TimeoutLinkPlugin };

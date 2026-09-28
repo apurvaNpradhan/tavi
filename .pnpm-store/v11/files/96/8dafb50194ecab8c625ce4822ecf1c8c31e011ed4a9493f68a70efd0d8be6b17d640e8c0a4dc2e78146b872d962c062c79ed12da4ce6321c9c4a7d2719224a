@@ -1,0 +1,8 @@
+import { A11yDevtoolsCore } from "../../core/index.js";
+import { createReactPanel } from "@tanstack/devtools-utils/react";
+//#region src/react/production/A11yDevtools.ts
+var [A11yDevtoolsPanel] = createReactPanel(A11yDevtoolsCore);
+//#endregion
+export { A11yDevtoolsPanel };
+
+//# sourceMappingURL=A11yDevtools.js.map

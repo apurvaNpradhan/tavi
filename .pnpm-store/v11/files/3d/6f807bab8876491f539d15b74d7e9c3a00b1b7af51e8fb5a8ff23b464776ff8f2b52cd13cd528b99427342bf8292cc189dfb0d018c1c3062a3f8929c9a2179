@@ -1,0 +1,97 @@
+import { JsonSchemaConverter, AnySchema, JsonSchemaConverterDirection, JsonSchema } from '@orpc/json-schema';
+import * as zod_v4_core from 'zod/v4/core';
+import { ToJSONSchemaParams, $input, $output } from 'zod/v4/core';
+import * as _openapi_spec_types_v3_2 from '@openapi-spec/types/v3.2';
+
+interface ZodToJsonSchemaConverterOptions extends Omit<ToJSONSchemaParams, 'target' | 'io'> {
+    /**
+     * Caches conversion results in a WeakMap keyed by the Zod schema instance,
+     * so converting the same schema again is free.
+     *
+     * When enabled, repeated conversions return the same JSON schema object,
+     * so treat returned schemas as immutable.
+     *
+     * @default false
+     */
+    cache?: boolean;
+}
+/**
+ * Converts Zod schemas into JSON Schema using Zod's built-in `toJSONSchema`,
+ * with additional support for types such as `z.bigint()`, `z.date()`, `z.set()`, and `z.map()`.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/zod | Zod Integration}
+ */
+declare class ZodToJsonSchemaConverter implements JsonSchemaConverter {
+    private readonly toJSONSchemaParams;
+    private readonly cache;
+    constructor({ cache, ...toJSONSchemaParams }?: ZodToJsonSchemaConverterOptions);
+    condition(schema: AnySchema | undefined, _direction: JsonSchemaConverterDirection): boolean;
+    convert(schema: AnySchema | undefined, direction: JsonSchemaConverterDirection): [jsonSchema: JsonSchema, optional: boolean];
+    private convertUncached;
+    private convertZod;
+    private getCustomJsonSchema;
+}
+
+/**
+ * Zod registry for customizing generated JSON schema, can use both for .input and .output
+ *
+ * @example
+ * ```ts
+ * import { JSON_SCHEMA_REGISTRY } from '@orpc/zod'
+ *
+ * const user = z.object({
+ *   name: z.string(),
+ *   age: z.number(),
+ * })
+ *
+ * JSON_SCHEMA_REGISTRY.add(user, {
+ *   examples: [{ name: 'John', age: 20 }],
+ * })
+ * ```
+ *
+ * @see {@link https://orpc.dev/docs/integrations/zod | Zod Integration}
+ */
+declare const JSON_SCHEMA_REGISTRY: zod_v4_core.$ZodRegistry<_openapi_spec_types_v3_2.SchemaObjectFields<typeof $input | typeof $output>, zod_v4_core.$ZodType<unknown, unknown, zod_v4_core.$ZodTypeInternals<unknown, unknown>>>;
+/**
+ * Zod registry for customizing generated JSON schema, only useful for .input
+ *
+ * @example
+ * ```ts
+ * import { JSON_SCHEMA_INPUT_REGISTRY } from '@orpc/zod'
+ *
+ * const user = z.object({
+ *   name: z.string(),
+ *   age: z.string().transform(v => Number(v)),
+ * })
+ *
+ * JSON_SCHEMA_INPUT_REGISTRY.add(user, {
+ *   examples: [{ name: 'John', age: "20" }],
+ * })
+ * ```
+ *
+ * @see {@link https://orpc.dev/docs/integrations/zod | Zod Integration}
+ */
+declare const JSON_SCHEMA_INPUT_REGISTRY: zod_v4_core.$ZodRegistry<_openapi_spec_types_v3_2.SchemaObjectFields<typeof $input>, zod_v4_core.$ZodType<unknown, unknown, zod_v4_core.$ZodTypeInternals<unknown, unknown>>>;
+/**
+ * Zod registry for customizing generated JSON schema, only useful for .output
+ *
+ * @example
+ * ```ts
+ * import { JSON_SCHEMA_OUTPUT_REGISTRY } from '@orpc/zod'
+ *
+ * const user = z.object({
+ *   name: z.string(),
+ *   age: z.string().transform(v => Number(v)),
+ * })
+ *
+ * JSON_SCHEMA_OUTPUT_REGISTRY.add(user, {
+ *   examples: [{ name: 'John', age: 20 }],
+ * })
+ * ```
+ *
+ * @see {@link https://orpc.dev/docs/integrations/zod | Zod Integration}
+ */
+declare const JSON_SCHEMA_OUTPUT_REGISTRY: zod_v4_core.$ZodRegistry<_openapi_spec_types_v3_2.SchemaObjectFields<typeof $output>, zod_v4_core.$ZodType<unknown, unknown, zod_v4_core.$ZodTypeInternals<unknown, unknown>>>;
+
+export { JSON_SCHEMA_INPUT_REGISTRY, JSON_SCHEMA_OUTPUT_REGISTRY, JSON_SCHEMA_REGISTRY, ZodToJsonSchemaConverter };
+export type { ZodToJsonSchemaConverterOptions };

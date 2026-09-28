@@ -1,0 +1,854 @@
+import { toArray, value, isPlainObject, isTypescriptObject, isAsyncIteratorObject, override, wrapAsyncIterator, isCompressibleContentType, isNoTransformCacheControl, parseAcceptEncodingQualities, varyByAcceptEncoding, stringifyJSON, anyAbortSignal, wrapReadableStream, AbortError } from '@orpc/shared';
+import { flattenStandardHeader, parseStandardUrl, generateContentDisposition, mergeStandardHeaders } from '@standard-server/core';
+import { isClientPeerSendMessage, ServerPeer, encodePeerMessage } from '@standard-server/peer';
+import { ORPCError } from '@orpc/client';
+import { toFetchHeaders, toStandardBody, toStandardHeaders } from '@standard-server/fetch';
+export { R as RequestLimitHandlerPlugin } from '../shared/server.1ExWFMze.mjs';
+
+const BATCH_CONTENT_TYPE = "application/vnd.orpc.batch";
+class BatchHandlerPlugin {
+  name = "~batch";
+  /**
+   * Run batch interceptors inside the tracing interceptors
+   * so each subrequest gets its own span instead of sharing one batch-level span.
+   */
+  after = ["~tracing"];
+  maxSize;
+  mapSubrequest;
+  successStatus;
+  headers;
+  keepAliveEnabled;
+  keepAliveInterval;
+  constructor(options = {}) {
+    this.maxSize = options.maxSize ?? 10;
+    this.mapSubrequest = options.mapSubrequest ?? ((subRequest, { request: batchRequest }) => ({
+      ...subRequest,
+      headers: {
+        ...subRequest.headers,
+        /**
+         * The batch request headers win over the subrequest ones. They are the only ones the
+         * transport actually saw, so headers the browser injects on its own, such as `cookie`
+         * or `origin`, cannot be overridden by a subrequest, which is just request payload.
+         */
+        ...batchRequest.headers,
+        "orpc-batch": void 0
+        // useful in case batch plugin is used multiple times
+      }
+    }));
+    this.successStatus = options.successStatus ?? 207;
+    this.headers = options.headers ?? {};
+    this.keepAliveEnabled = options.keepAlive?.enabled ?? true;
+    this.keepAliveInterval = options.keepAlive?.interval ?? 15e3;
+  }
+  init(options) {
+    const routingInterceptor = async (interceptorOptions) => {
+      const batchHeader = flattenStandardHeader(interceptorOptions.request.headers["orpc-batch"]);
+      if (batchHeader === void 0) {
+        return interceptorOptions.next();
+      }
+      const mode = batchHeader === "buffered" ? "buffered" : "streaming";
+      let messages;
+      try {
+        if (interceptorOptions.request.method === "GET") {
+          const [, search] = parseStandardUrl(interceptorOptions.request.url);
+          const params = new URLSearchParams(search);
+          const data = params.getAll("data").at(-1);
+          if (!data) {
+            return {
+              matched: true,
+              response: { status: 400, headers: {}, body: "Missing data parameter for batch request" }
+            };
+          }
+          const mightBeMessages = JSON.parse(data);
+          if (!Array.isArray(mightBeMessages) || mightBeMessages.some((m) => !isClientPeerSendMessage(m))) {
+            return {
+              matched: true,
+              response: { status: 400, headers: {}, body: "Invalid batch request data parameter" }
+            };
+          }
+          messages = mightBeMessages;
+        } else {
+          const mightBeMessages = await interceptorOptions.request.resolveBody();
+          if (!Array.isArray(mightBeMessages) || mightBeMessages.some((m) => !isClientPeerSendMessage(m))) {
+            return {
+              matched: true,
+              response: { status: 400, headers: {}, body: "Invalid batch request body" }
+            };
+          }
+          messages = mightBeMessages;
+        }
+      } catch {
+        return {
+          matched: true,
+          response: { status: 400, headers: {}, body: "Invalid batch request" }
+        };
+      }
+      const outerMethod = interceptorOptions.request.method;
+      if ((outerMethod === "GET" || outerMethod === "QUERY") && messages.some((message) => message.kind === "request" && message.json.method !== outerMethod)) {
+        return {
+          matched: true,
+          response: { status: 400, headers: {}, body: `${outerMethod} batch requests only accept ${outerMethod} sub-requests` }
+        };
+      }
+      const maxSize = await value(this.maxSize, interceptorOptions);
+      if (messages.length > maxSize) {
+        return {
+          matched: true,
+          response: { status: 413, headers: {}, body: "Batch request size exceeds the maximum allowed size" }
+        };
+      }
+      const handleIndividualRequest = async (request) => {
+        try {
+          request = this.mapSubrequest(request, interceptorOptions);
+          const { matched, response } = await interceptorOptions.next({ ...interceptorOptions, request });
+          if (!matched) {
+            return { status: 404, headers: {}, body: "No procedure matched" };
+          }
+          return response;
+        } catch (err) {
+          Promise.reject(err);
+          return { status: 500, headers: {}, body: "Internal server error" };
+        }
+      };
+      const status = await value(this.successStatus, interceptorOptions);
+      const headers = await value(this.headers, interceptorOptions);
+      if (mode === "buffered") {
+        const responseMessages = [];
+        const peer2 = new ServerPeer(async (message) => {
+          responseMessages.push(message);
+        });
+        await Promise.all(messages.map((msg) => peer2.message(msg, handleIndividualRequest)));
+        await peer2.close();
+        if (responseMessages.some((msg) => msg.binary !== void 0)) {
+          const chunks = [];
+          for (const message of responseMessages) {
+            const encoded = await encodePeerMessage(message);
+            const bytes = typeof encoded === "string" ? new TextEncoder().encode(encoded) : encoded;
+            const lengthBuffer = new ArrayBuffer(4);
+            new DataView(lengthBuffer).setUint32(0, bytes.byteLength, false);
+            chunks.push(new Uint8Array(lengthBuffer));
+            chunks.push(bytes);
+          }
+          return {
+            matched: true,
+            response: {
+              status,
+              headers,
+              body: new Blob(chunks, { type: BATCH_CONTENT_TYPE })
+            }
+          };
+        }
+        return {
+          matched: true,
+          response: { status, headers, body: responseMessages }
+        };
+      }
+      let streamController;
+      let keepAliveTimer;
+      const clearKeepAlive = () => {
+        if (keepAliveTimer !== void 0) {
+          clearInterval(keepAliveTimer);
+          keepAliveTimer = void 0;
+        }
+      };
+      const scheduleKeepAlive = () => {
+        if (!this.keepAliveEnabled) {
+          return;
+        }
+        clearKeepAlive();
+        keepAliveTimer = setInterval(() => {
+          try {
+            const lengthBuffer = new ArrayBuffer(4);
+            new DataView(lengthBuffer).setUint32(0, 0, false);
+            streamController.enqueue(new Uint8Array(lengthBuffer));
+          } catch {
+            clearKeepAlive();
+          }
+        }, this.keepAliveInterval);
+      };
+      const stream = new ReadableStream({
+        start(controller) {
+          streamController = controller;
+          scheduleKeepAlive();
+        },
+        cancel() {
+          clearKeepAlive();
+        }
+      });
+      const peer = new ServerPeer(async (message) => {
+        const encoded = await encodePeerMessage(message);
+        const bytes = typeof encoded === "string" ? new TextEncoder().encode(encoded) : encoded;
+        const lengthBuffer = new ArrayBuffer(4);
+        new DataView(lengthBuffer).setUint32(0, bytes.byteLength, false);
+        streamController.enqueue(new Uint8Array(lengthBuffer));
+        streamController.enqueue(bytes);
+        scheduleKeepAlive();
+      });
+      Promise.all(messages.map((msg) => peer.message(msg, handleIndividualRequest))).then(async () => {
+        clearKeepAlive();
+        streamController.close();
+        await peer.close();
+      }).catch(async (error) => {
+        clearKeepAlive();
+        streamController.error(error);
+        await peer.close(error);
+      });
+      return {
+        matched: true,
+        response: {
+          status,
+          headers: { ...headers, "content-type": BATCH_CONTENT_TYPE },
+          body: stream
+        }
+      };
+    };
+    return {
+      ...options,
+      routingInterceptors: [routingInterceptor, ...toArray(options.routingInterceptors)]
+    };
+  }
+}
+
+class CORSHandlerPlugin {
+  options;
+  name = "~cors";
+  /**
+   * - Do not create spans for CORS preflight requests.
+   * - Run CORS interceptors before batch interceptors so headers are applied to
+   *  the actual response rather than sub-responses.
+   */
+  after = ["~tracing", "~batch"];
+  constructor(options = {}) {
+    const defaults = {
+      origin: "*",
+      allowMethods: ["GET", "HEAD", "PUT", "POST", "DELETE", "PATCH", "QUERY"]
+    };
+    this.options = {
+      ...defaults,
+      ...options
+    };
+  }
+  init(options) {
+    const corsHeadersInterceptor = async (interceptorOptions) => {
+      const result = await interceptorOptions.next();
+      if (!result.matched) {
+        return result;
+      }
+      const resHeaders = { ...result.response.headers };
+      const origin = flattenStandardHeader(interceptorOptions.request.headers.origin);
+      const allowOrigin = await this.resolveOrigin(this.options.origin, origin, interceptorOptions);
+      const timingAllowOrigin = await this.resolveOrigin(this.options.timingOrigin, origin, interceptorOptions);
+      if (allowOrigin.value !== void 0) {
+        resHeaders["access-control-allow-origin"] = allowOrigin.value;
+      }
+      if (timingAllowOrigin.value !== void 0) {
+        resHeaders["timing-allow-origin"] = timingAllowOrigin.value;
+      }
+      if (allowOrigin.varies || timingAllowOrigin.varies) {
+        const existingVary = flattenStandardHeader(resHeaders.vary);
+        if (!existingVary?.split(",").some((v) => v.trim().toLowerCase() === "origin")) {
+          resHeaders.vary = existingVary ? `${existingVary}, Origin` : "Origin";
+        }
+      }
+      if (this.options.credentials) {
+        resHeaders["access-control-allow-credentials"] = "true";
+      }
+      if (this.options.exposeHeaders?.length) {
+        resHeaders["access-control-expose-headers"] = flattenStandardHeader(this.options.exposeHeaders);
+      }
+      return { ...result, response: { ...result.response, headers: resHeaders } };
+    };
+    const preflightInterceptor = async (interceptorOptions) => {
+      if (interceptorOptions.request.method === "OPTIONS") {
+        const resHeaders = {};
+        if (this.options.maxAge !== void 0) {
+          resHeaders["access-control-max-age"] = this.options.maxAge.toString();
+        }
+        if (this.options.allowMethods?.length) {
+          resHeaders["access-control-allow-methods"] = flattenStandardHeader(this.options.allowMethods);
+        }
+        const allowHeaders = this.options.allowHeaders ?? interceptorOptions.request.headers["access-control-request-headers"];
+        if (typeof allowHeaders === "string" || allowHeaders?.length) {
+          resHeaders["access-control-allow-headers"] = flattenStandardHeader(allowHeaders);
+        }
+        return {
+          matched: true,
+          response: {
+            status: 204,
+            headers: resHeaders,
+            body: void 0
+          }
+        };
+      }
+      return interceptorOptions.next();
+    };
+    return {
+      ...options,
+      routingInterceptors: [
+        corsHeadersInterceptor,
+        preflightInterceptor,
+        ...toArray(options.routingInterceptors)
+      ]
+    };
+  }
+  async resolveOrigin(option, origin, interceptorOptions) {
+    if (typeof option === "function") {
+      if (origin === void 0) {
+        return { value: void 0, varies: true };
+      }
+      const allowed2 = toArray(await option(origin, interceptorOptions));
+      if (allowed2.includes("*")) {
+        return { value: "*", varies: true };
+      }
+      return { value: allowed2.includes(origin) ? origin : void 0, varies: true };
+    }
+    const allowed = toArray(await option);
+    if (allowed.includes("*")) {
+      return { value: "*", varies: false };
+    }
+    if (origin !== void 0 && allowed.includes(origin)) {
+      return { value: origin, varies: true };
+    }
+    return { value: void 0, varies: allowed.length > 0 };
+  }
+}
+
+class GetMethodCsrfProtectionHandlerPlugin {
+  name = "~get-method-csrf-protection";
+  init(options) {
+    const interceptor = (interceptorOptions) => {
+      if (this.isAllowed(interceptorOptions)) {
+        return interceptorOptions.next();
+      }
+      throw new ORPCError("FORBIDDEN", { message: "Request blocked by CSRF protection." });
+    };
+    return {
+      ...options,
+      interceptors: [interceptor, ...toArray(options.interceptors)]
+    };
+  }
+  isAllowed({ request }) {
+    if (request.method !== "GET") {
+      return true;
+    }
+    const site = flattenStandardHeader(request.headers["sec-fetch-site"])?.toLowerCase();
+    if (site === void 0 || site === "same-origin" || site === "same-site") {
+      return true;
+    }
+    const mode = flattenStandardHeader(request.headers["sec-fetch-mode"])?.toLowerCase();
+    const dest = flattenStandardHeader(request.headers["sec-fetch-dest"])?.toLowerCase();
+    if (mode === void 0 || dest === void 0) {
+      return false;
+    }
+    return mode !== "navigate" || dest !== "document";
+  }
+}
+
+class MethodOverrideHandlerPlugin {
+  name = "~method-override";
+  /**
+   * Should override batch sub-request methods, not the original batch request.
+   */
+  before = ["~batch"];
+  param;
+  methods;
+  constructor(options = {}) {
+    this.param = options.param ?? "method";
+    this.methods = new Set((options.methods ?? ["PUT", "PATCH", "DELETE"]).map((method) => method.toUpperCase()));
+  }
+  init(options) {
+    const routingInterceptor = async ({ next, ...interceptorOptions }) => {
+      const { request } = interceptorOptions;
+      if (request.method !== "POST") {
+        return next();
+      }
+      const [pathname, search, hash] = parseStandardUrl(request.url);
+      const params = new URLSearchParams(search);
+      const raw = params.getAll(this.param).at(-1);
+      if (raw === void 0) {
+        return next();
+      }
+      const method = raw.toUpperCase();
+      if (!this.methods.has(method)) {
+        return next();
+      }
+      params.delete(this.param);
+      const url = `${pathname}${params.size ? `?${params}` : ""}${hash ?? ""}`;
+      return next({
+        ...interceptorOptions,
+        request: { ...request, method, url }
+      });
+    };
+    return {
+      ...options,
+      routingInterceptors: [routingInterceptor, ...toArray(options.routingInterceptors)]
+    };
+  }
+}
+
+class PrototypePollutionProtectionHandlerPlugin {
+  name = "~prototype-pollution-protection";
+  init(options) {
+    const interceptor = (interceptorOptions) => {
+      const input = interceptorOptions.input;
+      if (isAsyncIteratorObject(input)) {
+        const guardedInput = override(input, wrapAsyncIterator(input, {
+          mapResult: (result) => {
+            this.rejectPollutingInput(result.value);
+            return result;
+          }
+        }));
+        return interceptorOptions.next({ ...interceptorOptions, input: guardedInput });
+      }
+      this.rejectPollutingInput(input);
+      return interceptorOptions.next();
+    };
+    return {
+      ...options,
+      clientInterceptors: [interceptor, ...toArray(options.clientInterceptors)]
+    };
+  }
+  rejectPollutingInput(input) {
+    if (this.containsPollutingKey(input)) {
+      throw new ORPCError("BAD_REQUEST", { message: "Request blocked by prototype pollution protection." });
+    }
+  }
+  /**
+   * Walks the containers the built-in codecs can produce: arrays, maps, sets, and plain
+   * objects, including null-prototype ones. Other objects, such as files and dates, carry
+   * no attacker-authored keys and are left alone. The walk is iterative, so input nested
+   * deeper than the call stack allows still gets the intended verdict instead of a
+   * `RangeError`.
+   */
+  containsPollutingKey(root) {
+    const visited = /* @__PURE__ */ new WeakSet();
+    const stack = [root];
+    while (stack.length !== 0) {
+      const value = stack.pop();
+      if (typeof value !== "object" || value === null || visited.has(value)) {
+        continue;
+      }
+      visited.add(value);
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          stack.push(item);
+        }
+        continue;
+      }
+      if (value instanceof Map || value instanceof Set) {
+        for (const entry of value) {
+          stack.push(entry);
+        }
+        continue;
+      }
+      if (!isPlainObject(value)) {
+        continue;
+      }
+      if (Object.hasOwn(value, "__proto__")) {
+        return true;
+      }
+      if (Object.hasOwn(value, "constructor") && isTypescriptObject(value.constructor) && Object.hasOwn(value.constructor, "prototype")) {
+        return true;
+      }
+      for (const key of Object.keys(value)) {
+        stack.push(value[key]);
+      }
+    }
+    return false;
+  }
+}
+
+class RequestCompressionHandlerPlugin {
+  name = "~request-compression";
+  /**
+   * Should decompress the original batch request body instead of sub-requests.
+   */
+  after = ["~batch"];
+  init(options) {
+    const routingInterceptor = async ({ next, ...interceptorOptions }) => {
+      const encodings = parseContentEncodings(
+        flattenStandardHeader(interceptorOptions.request.headers["content-encoding"])
+      );
+      if (encodings.length === 0 || !encodings.every(isSupportedEncoding)) {
+        return next();
+      }
+      const decompressedHeaders = {
+        ...interceptorOptions.request.headers,
+        "content-length": void 0,
+        "content-encoding": void 0
+      };
+      return next({
+        ...interceptorOptions,
+        request: {
+          ...interceptorOptions.request,
+          headers: decompressedHeaders,
+          async resolveBody(hint) {
+            const stream = await interceptorOptions.request.resolveBody("octet-stream");
+            if (!(stream instanceof ReadableStream)) {
+              return stream;
+            }
+            let decompressedStream = stream;
+            for (let i = encodings.length - 1; i >= 0; i--) {
+              decompressedStream = decompressedStream.pipeThrough(
+                new DecompressionStream(encodings[i])
+              );
+            }
+            const response = new Response(decompressedStream, {
+              headers: toFetchHeaders(decompressedHeaders)
+            });
+            return toStandardBody(response, { hint });
+          }
+        }
+      });
+    };
+    return {
+      ...options,
+      routingInterceptors: [
+        routingInterceptor,
+        ...toArray(options.routingInterceptors)
+      ]
+    };
+  }
+}
+const SUPPORTED_ENCODINGS = ["gzip", "deflate", "deflate-raw"];
+function isSupportedEncoding(encoding) {
+  return SUPPORTED_ENCODINGS.includes(encoding);
+}
+function parseContentEncodings(header) {
+  if (header === void 0) {
+    return [];
+  }
+  return header.split(",").map((part) => part.trim().toLowerCase());
+}
+
+class RequestHeadersHandlerPlugin {
+  name = "~request-headers";
+  init(options) {
+    return {
+      ...options,
+      interceptors: [
+        (interceptorOptions) => {
+          const reqHeaders = interceptorOptions.context.reqHeaders ?? toFetchHeaders(interceptorOptions.request.headers);
+          return interceptorOptions.next({
+            ...interceptorOptions,
+            context: {
+              ...interceptorOptions.context,
+              reqHeaders
+            }
+          });
+        },
+        ...toArray(options.interceptors)
+      ]
+    };
+  }
+}
+
+const AVG_BYTES_PER_CHAR = 1.2;
+class ResponseCompressionHandlerPlugin {
+  name = "~response-compression";
+  /**
+   * Compression should be done after batching, to compress the final response.
+   * Compression should also be done after response headers are set, to access final headers like Content-Type and Cache-Control.
+   */
+  after = ["~batch", "~response-headers"];
+  encodings;
+  threshold;
+  isCompressibleContentType;
+  constructor(options = {}) {
+    this.encodings = options.encodings ?? ["gzip", "deflate"];
+    this.threshold = options.threshold ?? 1024;
+    this.isCompressibleContentType = options.isCompressibleContentType ?? isCompressibleContentType;
+  }
+  init(options) {
+    const routingInterceptor = async ({ next, ...interceptorOptions }) => {
+      const result = await next();
+      if (!result.matched) {
+        return result;
+      }
+      const response = result.response;
+      const contentEncoding = flattenStandardHeader(response.headers["content-encoding"])?.trim()?.toLowerCase();
+      if (contentEncoding !== void 0) {
+        return result;
+      }
+      if (response.status === 206 || response.headers["content-range"] !== void 0) {
+        return result;
+      }
+      if (isNoTransformCacheControl(flattenStandardHeader(response.headers["cache-control"]))) {
+        return result;
+      }
+      const acceptEncodings = parseAcceptEncodingQualities(
+        flattenStandardHeader(interceptorOptions.request.headers["accept-encoding"])
+      );
+      const encoding = this.encodings.find((enc) => (acceptEncodings.get(enc) ?? 0) > 0);
+      if (encoding === void 0) {
+        return result;
+      }
+      const body = response.body;
+      const headers = response.headers;
+      if (body instanceof ReadableStream) {
+        const contentLength = Number(flattenStandardHeader(headers["content-length"]));
+        if ((!Number.isFinite(contentLength) || contentLength >= this.threshold) && this.isCompressibleContentType(flattenStandardHeader(headers["content-type"]), interceptorOptions)) {
+          return {
+            ...result,
+            response: {
+              ...response,
+              body: body.pipeThrough(new CompressionStream(encoding)),
+              headers: {
+                ...headers,
+                "standard-server": "octet-stream",
+                "content-length": [],
+                "content-encoding": encoding,
+                "vary": varyByAcceptEncoding(flattenStandardHeader(headers.vary))
+              }
+            }
+          };
+        }
+      } else if (body instanceof Blob) {
+        if ((!Number.isFinite(body.size) || body.size >= this.threshold) && this.isCompressibleContentType(body.type, interceptorOptions)) {
+          const contentDisposition = headers["content-disposition"] ?? generateContentDisposition(
+            body instanceof File ? body.name : "blob"
+          );
+          return {
+            ...result,
+            response: {
+              ...response,
+              body: body.stream().pipeThrough(new CompressionStream(encoding)),
+              headers: {
+                ...headers,
+                "standard-server": "file",
+                "content-type": body.type,
+                "content-length": [],
+                "content-disposition": contentDisposition,
+                "content-encoding": encoding,
+                "vary": varyByAcceptEncoding(flattenStandardHeader(headers.vary))
+              }
+            }
+          };
+        }
+      } else if (body instanceof FormData) {
+        const PART_OVERHEAD = 64;
+        let contentLength = 0;
+        for (const [key, value] of body) {
+          contentLength += PART_OVERHEAD + key.length;
+          if (value instanceof Blob) {
+            if (!Number.isFinite(value.size)) {
+              if (!this.isCompressibleContentType(value.type, interceptorOptions)) {
+                contentLength = -Infinity;
+                break;
+              }
+              contentLength = Infinity;
+            } else {
+              contentLength += this.isCompressibleContentType(value.type, interceptorOptions) ? value.size : -value.size;
+            }
+          } else {
+            contentLength += value.length * AVG_BYTES_PER_CHAR;
+          }
+        }
+        if (contentLength >= this.threshold) {
+          const res = new Response(body);
+          const compressedStream = res.body.pipeThrough(new CompressionStream(encoding));
+          return {
+            ...result,
+            response: {
+              ...response,
+              body: compressedStream,
+              headers: {
+                ...headers,
+                "standard-server": [],
+                "content-type": res.headers.get("content-type"),
+                "content-length": [],
+                "content-encoding": encoding,
+                "vary": varyByAcceptEncoding(flattenStandardHeader(headers.vary))
+              }
+            }
+          };
+        }
+      } else if (body instanceof URLSearchParams) {
+        const string = body.toString();
+        if (string.length * AVG_BYTES_PER_CHAR >= this.threshold) {
+          return {
+            ...result,
+            response: {
+              ...response,
+              body: new Blob([string]).stream().pipeThrough(new CompressionStream(encoding)),
+              headers: {
+                ...headers,
+                "standard-server": [],
+                "content-type": "application/x-www-form-urlencoded",
+                "content-length": [],
+                "content-encoding": encoding,
+                "vary": varyByAcceptEncoding(flattenStandardHeader(headers.vary))
+              }
+            }
+          };
+        }
+      } else if (body !== void 0 && !isAsyncIteratorObject(body)) {
+        const string = stringifyJSON(body);
+        if (string.length * AVG_BYTES_PER_CHAR >= this.threshold) {
+          return {
+            ...result,
+            response: {
+              ...response,
+              body: new Blob([string]).stream().pipeThrough(new CompressionStream(encoding)),
+              headers: {
+                ...headers,
+                "standard-server": [],
+                "content-type": "application/json",
+                "content-length": [],
+                "content-encoding": encoding,
+                "vary": varyByAcceptEncoding(flattenStandardHeader(headers.vary))
+              }
+            }
+          };
+        }
+      }
+      return result;
+    };
+    return {
+      ...options,
+      routingInterceptors: [
+        routingInterceptor,
+        ...toArray(options.routingInterceptors)
+      ]
+    };
+  }
+}
+
+class ResponseHeadersHandlerPlugin {
+  name = "~response-headers";
+  /**
+   * Interceptors should run after batch interceptors so headers are applied to each sub-response.
+   */
+  before = ["~batch"];
+  init(options) {
+    return {
+      ...options,
+      routingInterceptors: [
+        async (interceptorOptions) => {
+          const resHeaders = new Headers(interceptorOptions.context.resHeaders);
+          const result = await interceptorOptions.next({
+            ...interceptorOptions,
+            context: {
+              ...interceptorOptions.context,
+              resHeaders
+            }
+          });
+          if (!result.response) {
+            return result;
+          }
+          return {
+            ...result,
+            response: {
+              ...result.response,
+              headers: mergeStandardHeaders(result.response.headers, toStandardHeaders(resHeaders))
+            }
+          };
+        },
+        ...toArray(options.routingInterceptors)
+      ]
+    };
+  }
+}
+
+class RethrowHandlerPlugin {
+  name = "~rethrow";
+  filter;
+  CONTEXT_SYMBOL = Symbol("ORPC_RETHROW_HANDLER_PLUGIN_CONTEXT");
+  constructor(options) {
+    this.filter = options.filter;
+  }
+  init(options) {
+    const routingInterceptor = async (options2) => {
+      const pluginContext = {};
+      const result = await options2.next({
+        ...options2,
+        context: {
+          ...options2.context,
+          [this.CONTEXT_SYMBOL]: pluginContext
+        }
+      });
+      if (pluginContext.error) {
+        throw pluginContext.error.value;
+      }
+      return result;
+    };
+    const interceptor = async (options2) => {
+      const pluginContext = options2.context[this.CONTEXT_SYMBOL];
+      if (!pluginContext) {
+        throw new TypeError("[RethrowHandlerPlugin] Rethrow handler context has been corrupted or modified by another plugin or interceptor");
+      }
+      try {
+        return await options2.next();
+      } catch (error) {
+        if (this.filter(error, options2)) {
+          pluginContext.error = { value: error };
+        }
+        throw error;
+      }
+    };
+    return {
+      ...options,
+      routingInterceptors: [
+        ...toArray(options.routingInterceptors),
+        routingInterceptor
+        // rethrow as early as possible and keep it close to `interceptor` to avoid a corrupted or modified context
+      ],
+      interceptors: [
+        interceptor,
+        // catch as many errors as possible
+        ...toArray(options.interceptors)
+      ]
+    };
+  }
+}
+
+class TimeoutHandlerPlugin {
+  timeout;
+  streamingTimeout;
+  name = "~timeout";
+  constructor(options) {
+    this.timeout = options.timeout;
+    this.streamingTimeout = options.streamingTimeout;
+  }
+  init(options) {
+    const interceptor = async (interceptorOptions) => {
+      const timeoutMs = value(this.timeout, interceptorOptions);
+      const streamingTimeoutMs = value(this.streamingTimeout, interceptorOptions);
+      const hasTimeout = timeoutMs !== null && timeoutMs !== void 0;
+      const hasStreamingTimeout = streamingTimeoutMs !== null && streamingTimeoutMs !== void 0;
+      if (!hasTimeout && !hasStreamingTimeout) {
+        return interceptorOptions.next();
+      }
+      const controller = new AbortController();
+      const abortWithTimeout = (ms) => {
+        controller.abort(new AbortError(`Request timed out after ${ms}ms`));
+      };
+      const timeoutId = hasTimeout ? setTimeout(abortWithTimeout, timeoutMs, timeoutMs) : void 0;
+      const signal = anyAbortSignal([interceptorOptions.request.signal, controller.signal]);
+      try {
+        const response = await interceptorOptions.next({
+          ...interceptorOptions,
+          request: { ...interceptorOptions.request, signal }
+        });
+        if (hasStreamingTimeout) {
+          const body = response.body;
+          const isIterator = isAsyncIteratorObject(body);
+          if (isIterator || body instanceof ReadableStream) {
+            const streamingTimeoutId = setTimeout(abortWithTimeout, streamingTimeoutMs, streamingTimeoutMs);
+            const onFinish = () => clearTimeout(streamingTimeoutId);
+            return {
+              ...response,
+              body: isIterator ? override(body, wrapAsyncIterator(body, { onFinish })) : override(body, wrapReadableStream(body, { onFinish }))
+            };
+          }
+        }
+        return response;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+    return { ...options, interceptors: [interceptor, ...toArray(options.interceptors)] };
+  }
+}
+
+export { BATCH_CONTENT_TYPE, BatchHandlerPlugin, CORSHandlerPlugin, CORSHandlerPlugin as CORSPlugin, GetMethodCsrfProtectionHandlerPlugin, MethodOverrideHandlerPlugin, PrototypePollutionProtectionHandlerPlugin, RequestCompressionHandlerPlugin, RequestHeadersHandlerPlugin, RequestHeadersHandlerPlugin as RequestHeadersPlugin, ResponseCompressionHandlerPlugin, ResponseHeadersHandlerPlugin, ResponseHeadersHandlerPlugin as ResponseHeadersPlugin, RethrowHandlerPlugin, TimeoutHandlerPlugin };

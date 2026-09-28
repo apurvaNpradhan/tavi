@@ -1,0 +1,5 @@
+"use client";
+"use client";
+import { A11yDevtoolsPanel } from "./production/A11yDevtools.js";
+import { a11yDevtoolsPlugin } from "./production/plugin.js";
+export { A11yDevtoolsPanel, a11yDevtoolsPlugin };

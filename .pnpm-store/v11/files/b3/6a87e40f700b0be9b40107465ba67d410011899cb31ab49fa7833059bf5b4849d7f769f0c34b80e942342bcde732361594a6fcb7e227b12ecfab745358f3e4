@@ -1,0 +1,96 @@
+import { Promisable, OrderablePlugin, Interceptor } from '@orpc/shared';
+import { StandardRequest, StandardLazyResponse } from '@standard-server/core';
+import { C as ClientContext, a as ClientOptions, A as AnyORPCError, b as ClientLink } from './client.BoXZCzuS.js';
+
+type StandardLinkCodecDecodedResponse = {
+    kind: 'output';
+    output: unknown;
+} | {
+    kind: 'error';
+    error: AnyORPCError;
+};
+interface StandardLinkCodec<T extends ClientContext> {
+    encodeInput(input: unknown, path: string[], options: ClientOptions<T>): Promisable<StandardRequest>;
+    decodeResponse(response: StandardLazyResponse, path: string[], options: ClientOptions<T>): Promisable<StandardLinkCodecDecodedResponse>;
+}
+
+interface StandardLinkPlugin<T extends ClientContext> extends OrderablePlugin {
+    /**
+     * Initializes the plugin and returns new link options.
+     * Called once per plugin instance during composition.
+     *
+     * This method allows plugins to wrap, extend, or transform link options
+     * such as interceptors, or configuration.
+     *
+     * @param options - The current link options from previous plugins or base configuration
+     * @returns Transformed link options with plugin's modifications applied
+     *
+     * @example
+     * ```ts
+     * init(options) {
+     *   return {
+     *     ...options,
+     *     interceptors: [...(options.interceptors || []), myInterceptor]
+     *   }
+     * }
+     * ```
+     */
+    init?(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+declare class CompositeStandardLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    name: string;
+    protected readonly plugins: StandardLinkPlugin<T>[];
+    constructor(plugins?: StandardLinkPlugin<T>[]);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+/**
+ * Handles the transport layer for sending requests and receiving responses.
+ *
+ * Implementations are responsible for the actual network communication,
+ * such as HTTP fetch, WebSocket, or other transport mechanisms.
+ */
+interface StandardLinkTransport<T extends ClientContext> {
+    /**
+     * @throws Transport-level errors (network failures, timeouts, etc.)
+     */
+    send(request: StandardRequest, path: string[], options: ClientOptions<T>): Promise<StandardLazyResponse>;
+}
+
+interface StandardLinkInterceptorOptions<T extends ClientContext> extends ClientOptions<T> {
+    path: string[];
+    input: unknown;
+}
+type StandardLinkInterceptor<T extends ClientContext> = Interceptor<StandardLinkInterceptorOptions<T>, Promise<unknown>>;
+interface StandardLinkTransportInterceptorOptions<T extends ClientContext> extends ClientOptions<T> {
+    path: string[];
+    request: StandardRequest;
+}
+type StandardLinkTransportInterceptor<T extends ClientContext> = Interceptor<StandardLinkTransportInterceptorOptions<T>, Promise<StandardLazyResponse>>;
+interface StandardLinkOptions<T extends ClientContext> {
+    /**
+     * Interceptors that execute around the entire call, including transport and codec.
+     * Useful for error handling, logging, metrics, ...
+     */
+    interceptors?: StandardLinkInterceptor<T>[];
+    /**
+     * Interceptors that execute around the transport layer, after encoding and before decoding.
+     * Useful for modifying the request or response, adding transport-level logging, ...
+     */
+    transportInterceptors?: StandardLinkTransportInterceptor<T>[];
+    plugins?: StandardLinkPlugin<T>[];
+}
+declare class StandardLink<T extends ClientContext> implements ClientLink<T> {
+    private readonly codec;
+    private readonly transport;
+    private readonly interceptors;
+    private readonly transportInterceptors;
+    constructor(codec: StandardLinkCodec<T>, transport: StandardLinkTransport<T>, options?: StandardLinkOptions<T>);
+    /**
+     * @throws ORPCError, transport-level errors (network failures, timeouts, etc.)
+     */
+    call(path: string[], input: unknown, options: ClientOptions<T>): Promise<unknown>;
+}
+
+export { CompositeStandardLinkPlugin as C, StandardLink as a };
+export type { StandardLinkTransport as S, StandardLinkOptions as b, StandardLinkPlugin as c, StandardLinkTransportInterceptorOptions as d, StandardLinkInterceptorOptions as e, StandardLinkCodec as f, StandardLinkCodecDecodedResponse as g, StandardLinkInterceptor as h, StandardLinkTransportInterceptor as i };

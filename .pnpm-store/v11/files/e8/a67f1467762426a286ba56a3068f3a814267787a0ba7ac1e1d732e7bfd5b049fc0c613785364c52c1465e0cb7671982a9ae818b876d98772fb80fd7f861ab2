@@ -1,0 +1,252 @@
+function toArray(value) {
+  return Array.isArray(value) ? value : value === void 0 || value === null ? [] : [value];
+}
+
+class AbortError extends Error {
+  constructor(...rest) {
+    super(...rest);
+    this.name = "AbortError";
+  }
+}
+
+function sequential(fn) {
+  let lastOperationPromise = Promise.resolve();
+  return (...args) => {
+    return lastOperationPromise = lastOperationPromise.catch(() => {
+    }).then(() => {
+      return fn(...args);
+    });
+  };
+}
+
+class SequentialIdGenerator {
+  index = BigInt(1);
+  generate() {
+    const id = this.index.toString(36);
+    this.index++;
+    return id;
+  }
+}
+
+function isAsyncIteratorObject(maybe) {
+  if (!maybe || typeof maybe !== "object") {
+    return false;
+  }
+  return "next" in maybe && typeof maybe.next === "function" && Symbol.asyncIterator in maybe && typeof maybe[Symbol.asyncIterator] === "function";
+}
+const fallbackAsyncDisposeSymbol = Symbol.for("asyncDispose");
+const asyncDisposeSymbol = Symbol.asyncDispose ?? fallbackAsyncDisposeSymbol;
+class AsyncIteratorClass {
+  isDone = false;
+  isExecuteComplete = false;
+  cleanup;
+  next;
+  constructor(next, cleanup) {
+    this.cleanup = cleanup;
+    this.next = sequential(async () => {
+      if (this.isDone) {
+        return { done: true, value: void 0 };
+      }
+      let errorRef;
+      try {
+        const result = await next();
+        if (result.done) {
+          this.isDone = true;
+        }
+        return result;
+      } catch (error) {
+        errorRef = { value: error };
+        this.isDone = true;
+        throw error;
+      } finally {
+        if (this.isDone && !this.isExecuteComplete) {
+          this.isExecuteComplete = true;
+          await this.cleanup(errorRef ? { kind: "error", error: errorRef.value } : { kind: "success" });
+        }
+      }
+    });
+  }
+  async return(value) {
+    this.isDone = true;
+    if (!this.isExecuteComplete) {
+      this.isExecuteComplete = true;
+      await this.cleanup({ kind: "cancelled" });
+    }
+    return { done: true, value };
+  }
+  async throw(error) {
+    this.isDone = true;
+    if (!this.isExecuteComplete) {
+      this.isExecuteComplete = true;
+      await this.cleanup({ kind: "cancelled", error });
+    }
+    throw error;
+  }
+  /**
+   * asyncDispose symbol only available in esnext, we should fallback to Symbol.for('asyncDispose')
+   */
+  async [asyncDisposeSymbol]() {
+    this.isDone = true;
+    if (!this.isExecuteComplete) {
+      this.isExecuteComplete = true;
+      await this.cleanup({ kind: "cancelled" });
+    }
+  }
+  [Symbol.asyncIterator]() {
+    return this;
+  }
+}
+
+function parseEmptyableJSON(text) {
+  if (!text) {
+    return void 0;
+  }
+  return JSON.parse(text);
+}
+function stringifyJSON(value) {
+  return JSON.stringify(value);
+}
+
+function hasAnyDefinedValue(object) {
+  for (const value of Object.values(object)) {
+    if (value !== void 0) {
+      return true;
+    }
+  }
+  return false;
+}
+function isTypescriptObject(maybeObject) {
+  if (!maybeObject) {
+    return false;
+  }
+  const type = typeof maybeObject;
+  return type === "object" || type === "function";
+}
+
+function promiseWithResolvers() {
+  const result = {};
+  result.promise = new Promise((resolve, reject) => {
+    result.resolve = resolve;
+    result.reject = reject;
+  });
+  return result;
+}
+
+const GET_OR_BIND_CACHE = /* @__PURE__ */ new WeakMap();
+function getOrBind(target, property, { bind = true } = {}) {
+  const value = Reflect.get(target, property);
+  if (!bind || typeof value !== "function") {
+    return value;
+  }
+  let targetCache = GET_OR_BIND_CACHE.get(value);
+  if (!targetCache) {
+    GET_OR_BIND_CACHE.set(value, targetCache = /* @__PURE__ */ new WeakMap());
+  }
+  let bound = targetCache.get(target);
+  if (!bound) {
+    targetCache.set(target, bound = value.bind(target));
+  }
+  return bound;
+}
+
+class Queue {
+  items = [];
+  pendingPulls = [];
+  closed;
+  /**
+   * Pushes an item into the queue.
+   * @throws when the queue is closed or aborted
+   */
+  push(item) {
+    if (this.closed) {
+      throw this.closed.reason;
+    }
+    const pendingPull = this.pendingPulls.shift();
+    if (pendingPull) {
+      pendingPull[0](item);
+    } else {
+      this.items.push(item);
+    }
+  }
+  /**
+   * Pulls the next item from the queue.
+   *
+   * @throws when the queue is closed or aborted. Note that buffered items can still be pulled after close until the buffer is drained.
+   */
+  async pull() {
+    if (this.items.length > 0) {
+      return this.items.shift();
+    }
+    if (this.closed) {
+      throw this.closed.reason;
+    }
+    return new Promise((resolve, reject) => {
+      this.pendingPulls.push([resolve, reject]);
+    });
+  }
+  /**
+   * Closes the queue and rejects any pending pulls.
+   * Buffered items remain available to be pulled. Repeated calls are ignored.
+   */
+  close(reason) {
+    if (this.closed) {
+      return;
+    }
+    reason ??= new AbortError("Queue was closed.");
+    this.closed = { reason };
+    this.pendingPulls.forEach(([, reject]) => reject(reason));
+    this.pendingPulls.length = 0;
+  }
+  /**
+   * Aborts the queue.
+   * Unlike `close()`, this also discards any buffered items before closing.
+   */
+  abort(reason) {
+    reason ??= new AbortError("Queue was aborted.");
+    this.items.length = 0;
+    this.close(reason);
+  }
+}
+
+function sleep(ms, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let abortListener = null;
+    const timeout = setTimeout(() => {
+      if (abortListener) {
+        signal?.removeEventListener("abort", abortListener);
+      }
+      resolve();
+    }, ms);
+    if (signal) {
+      signal.addEventListener("abort", abortListener = () => {
+        clearTimeout(timeout);
+        reject(signal?.reason);
+      }, { once: true });
+    }
+  });
+}
+
+const LONE_SURROGATE_REGEX = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+function safeEncodeURIComponent(value) {
+  try {
+    return encodeURIComponent(value);
+  } catch {
+    return encodeURIComponent(value.replace(LONE_SURROGATE_REGEX, "\uFFFD"));
+  }
+}
+function safeDecodeURIComponent(value) {
+  if (!value.includes("%")) {
+    return value;
+  }
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export { AbortError, AsyncIteratorClass, Queue, SequentialIdGenerator, getOrBind, hasAnyDefinedValue, isAsyncIteratorObject, isTypescriptObject, parseEmptyableJSON, promiseWithResolvers, safeDecodeURIComponent, safeEncodeURIComponent, sequential, sleep, stringifyJSON, toArray };

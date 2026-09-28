@@ -1,0 +1,59 @@
+name: Integration
+
+# Runs the database-backed suite. These specs exist because a whole class of bug
+# — a predicate that matches no rows, a cascade that does not fire, a role check
+# that reads the wrong table — passes every unit test and only shows up against
+# real infrastructure.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: tavi_test
+          POSTGRES_USER: tavi
+          POSTGRES_PASSWORD: tavi
+        ports:
+          - 5432:5432
+        # Without this the migrations run before the database accepts
+        # connections.
+        options: >-
+          --health-cmd "pg_isready -U tavi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: >-
+        postgresql://tavi:tavi@localhost:5432/tavi_test
+      # Any value works in CI; the process never runs in production mode here.
+      AUTH_SECRET: ci-test-secret-value-not-used-in-production
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: |
+          pnpm --filter @tavi/permissions build
+          pnpm --filter @tavi/email build
+          pnpm --filter @tavi/env build
+      - name: Run integration tests
+        run: pnpm --filter @tavi/api test:integration

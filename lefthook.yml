@@ -1,0 +1,35 @@
+# Git hooks, installed by `scripts/install-git-hooks.mjs` from the `prepare`
+# script (which is what runs on `pnpm install`). See https://lefthook.dev.
+#
+# These only run where a `.git` directory exists: the `prepare` script skips
+# itself inside Docker builds, where there is nothing to hook.
+#
+# Every job passes `--fix` and `stage_fixed: true`, so a file the formatter or
+# linter rewrites is re-staged and the commit contains the fixed version. A hook
+# that only reported the problem would leave the fix behind in the working tree.
+# Rules that cannot be applied automatically (oxlint's anti-slop rules, for
+# instance) still fail the commit, which is the point.
+
+min_version: 1.7.0
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      # oxfmt reads `.oxfmtrc.json`, so files it is configured to ignore
+      # (openapi.json, drizzle SQL, the vendored lint plugins) pass through
+      # untouched even if they are staged.
+      glob: "*.{ts,tsx,mts,cts,js,mjs,cjs,json,jsonc,md,mdx,css,yml,yaml}"
+      run: pnpm exec oxfmt --write {staged_files}
+      stage_fixed: true
+
+    - name: lint
+      glob: "*.{ts,tsx,mts,cts,js,mjs,cjs}"
+      run: pnpm exec oxlint --fix {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      # {1} is the path to the message file git is about to use.
+      run: pnpm exec commitlint --edit {1}

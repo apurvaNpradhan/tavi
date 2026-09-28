@@ -1,0 +1,39 @@
+import { resolveMaybeOptionalOptions } from '@orpc/shared';
+import { toStandardLazyRequest, sendStandardResponse } from '@standard-server/aws-lambda';
+import { r as resolveFriendlyStandardHandlerHandleOptions } from '../../shared/server.W91HSRkE.mjs';
+import { R as RPCHandlerCodec, S as StandardHandler } from '../../shared/server.C0lFtoHU.mjs';
+import '@orpc/client';
+import '@standard-server/core';
+import '../../shared/server.Djb_ebJT.mjs';
+import '@orpc/contract';
+import '../../shared/server.BynNaBBA.mjs';
+
+class AwsLambdaHandler {
+  constructor(standardHandler, options = {}) {
+    this.standardHandler = standardHandler;
+    this.sendStandardResponseOptions = options.sendStandardResponse;
+  }
+  sendStandardResponseOptions;
+  async handle(event, responseStream, ...rest) {
+    const standardRequest = toStandardLazyRequest(event, responseStream);
+    const result = await this.standardHandler.handle(
+      standardRequest,
+      resolveFriendlyStandardHandlerHandleOptions(resolveMaybeOptionalOptions(rest))
+    );
+    if (!result.matched) {
+      return result;
+    }
+    await sendStandardResponse(responseStream, result.response, this.sendStandardResponseOptions);
+    return result;
+  }
+}
+
+class RPCHandler extends AwsLambdaHandler {
+  constructor(router, options = {}) {
+    const codec = new RPCHandlerCodec(router, options);
+    const handler = new StandardHandler(codec, options);
+    super(handler, options);
+  }
+}
+
+export { AwsLambdaHandler, RPCHandler };

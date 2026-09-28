@@ -1,0 +1,307 @@
+import { getSeverityStyle } from "../styles/severity-theme.js";
+import { resolveSemanticTheme } from "@tanstack/devtools-ui/internal";
+//#region src/core/utils/ui.utils.ts
+function scrollToElement(selector) {
+	try {
+		const element = document.querySelector(selector);
+		if (element) {
+			element.scrollIntoView({
+				behavior: "smooth",
+				block: "start",
+				inline: "nearest"
+			});
+			return true;
+		}
+	} catch (error) {
+		console.warn("[A11y Panel] Could not scroll to element:", selector, error);
+	}
+	return false;
+}
+var HIGHLIGHT_CLASS = "tsd-a11y-highlight";
+var HIGHLIGHT_STYLE_ID = "tsd-a11y-highlight-styles";
+var TOOLTIP_CLASS = "tsd-a11y-tooltip";
+var activeTooltips = /* @__PURE__ */ new Map();
+var scrollHandler = null;
+var TOOLTIP_HEIGHT = 28;
+/**
+* Severity levels mapped to numeric values for comparison (higher = more severe)
+*/
+var SEVERITY_ORDER = {
+	critical: 4,
+	serious: 3,
+	moderate: 2,
+	minor: 1
+};
+/**
+* Selectors for devtools elements that should never be highlighted
+*/
+var DEVTOOLS_SELECTORS = [
+	"[data-testid=\"tanstack_devtools\"]",
+	"[data-devtools]",
+	"[data-devtools-panel]",
+	"[data-a11y-overlay]"
+];
+/**
+* Check if an element is inside the devtools panel
+*/
+function isInsideDevtools(element) {
+	for (const selector of DEVTOOLS_SELECTORS) if (element.closest(selector)) return true;
+	return false;
+}
+var SEVERITY_LABELS = {
+	critical: "Critical",
+	serious: "Serious",
+	moderate: "Moderate",
+	minor: "Minor"
+};
+var RULE_SET_LABELS = {
+	wcag2a: "WCAG 2.0 A",
+	wcag2aa: "WCAG 2.0 AA",
+	wcag21aa: "WCAG 2.1 AA",
+	wcag22aa: "WCAG 2.2 AA",
+	section508: "Section 508",
+	"best-practice": "Best Practice",
+	all: "All Rules"
+};
+/**
+* Inject overlay styles into the document
+*/
+function injectStyles(theme) {
+	document.getElementById(HIGHLIGHT_STYLE_ID)?.remove();
+	const semantic = resolveSemanticTheme(theme);
+	const styleFor = (impact) => getSeverityStyle(impact, theme);
+	const style = document.createElement("style");
+	style.id = HIGHLIGHT_STYLE_ID;
+	style.textContent = `
+    .${HIGHLIGHT_CLASS}--critical {
+      outline: ${styleFor("critical").outline} ${styleFor("critical").colors.border} !important;
+      outline-offset: 2px !important;
+      background-color: ${styleFor("critical").colors.subtleFill} !important;
+    }
+
+    .${HIGHLIGHT_CLASS}--serious {
+      outline: ${styleFor("serious").outline} ${styleFor("serious").colors.border} !important;
+      outline-offset: 2px !important;
+      background-color: ${styleFor("serious").colors.subtleFill} !important;
+    }
+
+    .${HIGHLIGHT_CLASS}--moderate {
+      outline: ${styleFor("moderate").outline} ${styleFor("moderate").colors.border} !important;
+      outline-offset: 2px !important;
+      background-color: ${styleFor("moderate").colors.subtleFill} !important;
+    }
+
+    .${HIGHLIGHT_CLASS}--minor {
+      outline: ${styleFor("minor").outline} ${styleFor("minor").colors.border} !important;
+      outline-offset: 2px !important;
+      background-color: ${styleFor("minor").colors.subtleFill} !important;
+    }
+
+    .${TOOLTIP_CLASS} {
+      position: fixed;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font: ${semantic.type.bodyXs.weight} ${semantic.type.bodyXs.size} / ${semantic.type.bodyXs.lineHeight} ${semantic.font.body};
+      white-space: nowrap;
+      z-index: 99990;
+      pointer-events: none;
+      box-shadow: ${semantic.shadow.sm};
+      max-width: 90vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .${TOOLTIP_CLASS}--critical {
+      background: ${styleFor("critical").colors.solidFill};
+      color: ${styleFor("critical").colors.onFill};
+    }
+
+    .${TOOLTIP_CLASS}--serious {
+      background: ${styleFor("serious").colors.solidFill};
+      color: ${styleFor("serious").colors.onFill};
+    }
+
+    .${TOOLTIP_CLASS}--moderate {
+      background: ${styleFor("moderate").colors.solidFill};
+      color: ${styleFor("moderate").colors.onFill};
+    }
+
+    .${TOOLTIP_CLASS}--minor {
+      background: ${styleFor("minor").colors.solidFill};
+      color: ${styleFor("minor").colors.onFill};
+    }
+  `;
+	document.head.appendChild(style);
+}
+/**
+* Calculate optimal tooltip position, ensuring it's always visible in viewport
+*/
+function calculateTooltipPosition(targetElement, tooltip) {
+	const rect = targetElement.getBoundingClientRect();
+	const tooltipHeight = TOOLTIP_HEIGHT;
+	const gap = 4;
+	const viewportPadding = 8;
+	let top = rect.top - tooltipHeight - gap;
+	let flipped = false;
+	if (top < viewportPadding) {
+		const belowTop = rect.top + gap + viewportPadding;
+		if (rect.bottom + gap + tooltipHeight < window.innerHeight) {
+			top = rect.bottom + gap;
+			flipped = true;
+		} else if (belowTop + tooltipHeight < window.innerHeight) {
+			top = belowTop;
+			flipped = true;
+		} else {
+			top = viewportPadding;
+			flipped = true;
+		}
+	}
+	let left = rect.left;
+	const tooltipWidth = tooltip.offsetWidth || 150;
+	if (left + tooltipWidth > window.innerWidth) left = Math.max(viewportPadding, window.innerWidth - tooltipWidth - viewportPadding);
+	if (left < viewportPadding) left = viewportPadding;
+	return {
+		top,
+		left,
+		flipped
+	};
+}
+/**
+* Update all tooltip positions based on their target elements
+*/
+function updateTooltipPositions() {
+	activeTooltips.forEach((targetElement, tooltip) => {
+		const { top, left } = calculateTooltipPosition(targetElement, tooltip);
+		tooltip.style.top = `${top}px`;
+		tooltip.style.left = `${left}px`;
+	});
+}
+/**
+* Start listening for scroll events to update tooltip positions
+*/
+function startScrollListener() {
+	if (scrollHandler) return;
+	scrollHandler = () => {
+		requestAnimationFrame(updateTooltipPositions);
+	};
+	window.addEventListener("scroll", scrollHandler, true);
+}
+/**
+* Stop listening for scroll events
+*/
+function stopScrollListener() {
+	if (scrollHandler) {
+		window.removeEventListener("scroll", scrollHandler, true);
+		scrollHandler = null;
+	}
+}
+/**
+* Create a tooltip element for issues and position it above the target element
+*/
+function createTooltip(issues, targetElement) {
+	if (issues.length === 0) return null;
+	const sortedIssues = [...issues].sort((a, b) => SEVERITY_ORDER[b.impact] - SEVERITY_ORDER[a.impact]);
+	const firstIssue = sortedIssues[0];
+	if (!firstIssue) return null;
+	const mostSevere = firstIssue.impact;
+	const tooltip = document.createElement("div");
+	tooltip.className = `${TOOLTIP_CLASS} ${TOOLTIP_CLASS}--${mostSevere}`;
+	if (sortedIssues.length === 1) tooltip.textContent = `${SEVERITY_LABELS[mostSevere]}: ${firstIssue.ruleId}`;
+	else {
+		const issueList = sortedIssues.map((issue) => `${SEVERITY_LABELS[issue.impact]}: ${issue.ruleId}`).join(" | ");
+		tooltip.textContent = `${sortedIssues.length} issues: ${issueList}`;
+	}
+	tooltip.setAttribute("data-a11y-overlay", "true");
+	activeTooltips.set(tooltip, targetElement);
+	if (activeTooltips.size === 1) startScrollListener();
+	const { top, left } = calculateTooltipPosition(targetElement, tooltip);
+	tooltip.style.top = `${top}px`;
+	tooltip.style.left = `${left}px`;
+	return tooltip;
+}
+/**
+* Highlight a single element with the specified severity
+*/
+function highlightElement(selector, impact = "serious", options = {}) {
+	const { showTooltip = true, ruleId, theme = "dark" } = options;
+	try {
+		injectStyles(theme);
+		const elements = document.querySelectorAll(selector);
+		if (elements.length === 0) {
+			console.warn(`[A11y Overlay] No elements found for selector: ${selector}`);
+			return;
+		}
+		let highlightedCount = 0;
+		elements.forEach((el) => {
+			if (isInsideDevtools(el)) return;
+			el.classList.add(HIGHLIGHT_CLASS, `${HIGHLIGHT_CLASS}--${impact}`);
+			if (showTooltip && highlightedCount === 0 && ruleId) {
+				const tooltip = createTooltip([{
+					ruleId,
+					impact
+				}], el);
+				if (tooltip) document.body.appendChild(tooltip);
+			}
+			highlightedCount++;
+		});
+		if (highlightedCount > 0) console.log(`[A11y Overlay] Highlighted ${highlightedCount} element(s) with selector: ${selector}`);
+	} catch (error) {
+		console.error("[A11y Overlay] Error highlighting element:", error);
+	}
+}
+/**
+* Highlight all elements with issues.
+* Shows all issues per element in the tooltip, using the most severe for highlighting.
+*/
+function highlightAllIssues(issues, theme = "dark") {
+	injectStyles(theme);
+	clearHighlights();
+	const selectorIssues = /* @__PURE__ */ new Map();
+	for (const issue of issues) for (const node of issue.nodes) {
+		const selector = node.selector;
+		const impact = issue.impact ?? "minor";
+		const existing = selectorIssues.get(selector) || [];
+		if (!existing.some((e) => e.ruleId === issue.ruleId)) {
+			existing.push({
+				ruleId: issue.ruleId,
+				impact
+			});
+			selectorIssues.set(selector, existing);
+		}
+	}
+	for (const [selector, issueList] of selectorIssues) {
+		if (issueList.length === 0) continue;
+		const mostSevereImpact = issueList.reduce((max, issue) => SEVERITY_ORDER[issue.impact] > SEVERITY_ORDER[max.impact] ? issue : max).impact;
+		try {
+			const elements = document.querySelectorAll(selector);
+			if (elements.length === 0) continue;
+			let highlightedCount = 0;
+			elements.forEach((el) => {
+				if (isInsideDevtools(el)) return;
+				el.classList.add(HIGHLIGHT_CLASS, `${HIGHLIGHT_CLASS}--${mostSevereImpact}`);
+				if (highlightedCount === 0) {
+					const tooltip = createTooltip(issueList, el);
+					if (tooltip) document.body.appendChild(tooltip);
+				}
+				highlightedCount++;
+			});
+		} catch (error) {
+			console.error("[A11y Overlay] Error highlighting element:", error);
+		}
+	}
+}
+/**
+* Clear all highlights from the page
+*/
+function clearHighlights() {
+	document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach((el) => {
+		el.classList.remove(HIGHLIGHT_CLASS, `${HIGHLIGHT_CLASS}--critical`, `${HIGHLIGHT_CLASS}--serious`, `${HIGHLIGHT_CLASS}--moderate`, `${HIGHLIGHT_CLASS}--minor`);
+	});
+	document.querySelectorAll(`.${TOOLTIP_CLASS}`).forEach((el) => el.remove());
+	activeTooltips.clear();
+	stopScrollListener();
+}
+//#endregion
+export { RULE_SET_LABELS, SEVERITY_LABELS, SEVERITY_ORDER, clearHighlights, highlightAllIssues, highlightElement, scrollToElement };
+
+//# sourceMappingURL=ui.utils.js.map

@@ -1,0 +1,365 @@
+import { ORPCError, toORPCError, RPCSerializer, COMMON_ERROR_STATUS_MAP } from '@orpc/client';
+import { sortPlugins, toArray, matchesHttpPathPrefix, value, intercept, getTracer, runWithSpan, ORPC_NAME, isAsyncIteratorObject, override, traceAsyncIterator, traceReadableStream, recordSpanError, wrapAsyncIterator, toTracingException, wrapReadableStream, pathToHttpPath, normalizeHttpPath, parseEmptyableJSON, getOwn } from '@orpc/shared';
+import { flattenStandardHeader, parseStandardUrl, ErrorEvent } from '@standard-server/core';
+import { c as createProcedureClient, u as unlazy, P as Procedure } from './server.Djb_ebJT.mjs';
+import { w as walkProcedureContractsSync, g as getRouter, c as createContractProcedure, D as DEFAULT_SUCCESS_STATUS, a as DEFAULT_ERROR_STATUS } from './server.BynNaBBA.mjs';
+
+class CompositeStandardHandlerPlugin {
+  name = "~composite";
+  plugins;
+  constructor(plugins = []) {
+    this.plugins = sortPlugins(plugins);
+  }
+  init(options) {
+    for (const plugin of this.plugins) {
+      if (plugin.init) {
+        options = plugin.init(options);
+      }
+    }
+    return options;
+  }
+}
+
+class StandardHandler {
+  constructor(codec, options) {
+    this.codec = codec;
+    options = new CompositeStandardHandlerPlugin([
+      ...toArray(options.plugins),
+      new TracingHandlerPlugin()
+    ]).init(options);
+    this.routingInterceptors = options.routingInterceptors;
+    this.interceptors = options.interceptors;
+    this.clientInterceptors = options.clientInterceptors;
+  }
+  routingInterceptors;
+  interceptors;
+  clientInterceptors;
+  async handle(request, options) {
+    const { prefix } = options;
+    if (prefix && !matchesHttpPathPrefix(request.url, prefix)) {
+      return { matched: false, response: void 0 };
+    }
+    const context = await value(options.context, request);
+    return intercept(
+      this.routingInterceptors,
+      { context, prefix, request },
+      async ({ context: context2, prefix: prefix2, request: request2 }) => {
+        const span = getTracer()?.getActiveSpan();
+        let step;
+        const matchedOrNot = await runWithSpan("find_procedure", () => this.codec.resolveProcedure(request2, { context: context2, prefix: prefix2 }));
+        if (!matchedOrNot) {
+          span?.updateName(`${ORPC_NAME}_no_match`);
+          span?.setAttribute("http.request.method", request2.method);
+          span?.setAttribute("url.path", request2.url);
+          return { matched: false };
+        }
+        const { path, procedure, decodeInput } = matchedOrNot;
+        span?.updateName(`${ORPC_NAME}.${path.join("/")}`);
+        span?.setAttribute("rpc.system", ORPC_NAME);
+        span?.setAttribute("rpc.method", path.join("."));
+        try {
+          const response = await intercept(
+            this.interceptors,
+            { context: context2, prefix: prefix2, request: request2, path, procedure, decodeInput },
+            async ({ context: context3, prefix: prefix3, request: request3, path: path2, procedure: procedure2, decodeInput: decodeInput2 }) => {
+              step = "decode_input";
+              let input = await runWithSpan("decode_input", decodeInput2);
+              step = void 0;
+              if (getTracer() && isAsyncIteratorObject(input)) {
+                input = override(input, traceAsyncIterator("consume_async_iterator_object_input", input));
+              } else if (getTracer() && input instanceof ReadableStream) {
+                input = override(input, traceReadableStream("consume_octet_stream_input", input));
+              }
+              const client = createProcedureClient(procedure2, {
+                context: context3,
+                path: path2,
+                interceptors: this.clientInterceptors
+              });
+              step = "call_procedure";
+              const output = await client(input, {
+                signal: request3.signal,
+                lastEventId: flattenStandardHeader(request3.headers["last-event-id"])
+              });
+              step = void 0;
+              const response2 = await this.codec.encodeOutput(output, procedure2, path2, { context: context3, prefix: prefix3 });
+              return response2;
+            }
+          );
+          return { matched: true, response };
+        } catch (e) {
+          if (step !== "call_procedure") {
+            recordSpanError(span, e);
+          }
+          const error = step === "decode_input" && !(e instanceof ORPCError) ? new ORPCError("BAD_REQUEST", {
+            message: `Malformed request. Ensure the request body is properly formatted and the 'Content-Type' header is set correctly.`,
+            cause: e
+          }) : toORPCError(e);
+          const response = await this.codec.encodeError(error, procedure, path, { context: context2, prefix: prefix2 });
+          return { matched: true, response };
+        }
+      }
+    );
+  }
+}
+class TracingHandlerPlugin {
+  name = "~tracing";
+  init(options) {
+    return {
+      ...options,
+      routingInterceptors: [
+        // Should be placed before user-provided interceptors to help them access the current active span.
+        async ({ next, request }) => {
+          const tracer = getTracer();
+          if (!tracer) {
+            return next();
+          }
+          const parent = tracer.extract?.(request.headers);
+          const [pathname] = parseStandardUrl(request.url);
+          return tracer.startActiveSpan(`${request.method} ${pathname}`, parent, async (span) => {
+            try {
+              const result = await next();
+              if (!result.matched) {
+                span.end();
+                return result;
+              }
+              const body = result.response.body;
+              if (isAsyncIteratorObject(body)) {
+                return {
+                  ...result,
+                  response: {
+                    ...result.response,
+                    /**
+                     * @remarks
+                     * **Warning**: Remember use `override` for remaining special properties
+                     */
+                    body: override(body, wrapAsyncIterator(body, {
+                      runWith: (fn) => tracer.withActiveSpan(span, fn),
+                      onError(error) {
+                        if (!(error instanceof ErrorEvent)) {
+                          span.recordException("error", toTracingException(error));
+                        }
+                      },
+                      onFinish() {
+                        span.end();
+                      }
+                    }))
+                  }
+                };
+              }
+              if (body instanceof ReadableStream) {
+                return {
+                  ...result,
+                  response: {
+                    ...result.response,
+                    /**
+                     * @remarks
+                     * **Warning**: Remember use `override` for remaining special properties
+                     */
+                    body: override(body, wrapReadableStream(body, {
+                      runWith: (fn) => tracer.withActiveSpan(span, fn),
+                      onError(error) {
+                        span.recordException("error", toTracingException(error));
+                      },
+                      onFinish() {
+                        span.end();
+                      }
+                    }))
+                  }
+                };
+              }
+              span.end();
+              return result;
+            } catch (e) {
+              span.recordException("error", toTracingException(e));
+              span.end();
+              throw e;
+            }
+          });
+        },
+        ...toArray(options.routingInterceptors)
+      ]
+    };
+  }
+}
+
+const RPC_DEFAULT_ALLOW_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
+class RPCMatcher {
+  filter;
+  allowMethodsSet;
+  allowMethodsFn;
+  rootRouter;
+  tree = /* @__PURE__ */ new Map();
+  pendingLazyRouters = /* @__PURE__ */ new Map();
+  constructor(router, options = {}) {
+    this.filter = options.filter ?? true;
+    const allowMethods = options.allowMethods ?? RPC_DEFAULT_ALLOW_METHODS;
+    if (typeof allowMethods !== "function") {
+      this.allowMethodsSet = new Set(allowMethods);
+    } else {
+      this.allowMethodsFn = allowMethods;
+    }
+    this.rootRouter = router;
+    this.index(router);
+  }
+  index(router, path = []) {
+    const lazyResults = walkProcedureContractsSync(router, (procedure, procedurePath) => {
+      if (!value(this.filter, procedure, procedurePath)) {
+        return;
+      }
+      this.tree.set(pathToHttpPath(procedurePath), {
+        path: procedurePath,
+        contract: procedure,
+        // contract-first entries have no implementation yet, resolveProcedure fills it in on demand
+        procedure: procedure instanceof Procedure ? procedure : void 0
+      });
+    }, path);
+    for (const result of lazyResults) {
+      this.pendingLazyRouters.set(pathToHttpPath(result.path), result);
+    }
+  }
+  async match(method, pathname, prefix) {
+    if (this.allowMethodsSet && !this.allowMethodsSet.has(method)) {
+      return void 0;
+    }
+    if (pathname.length > 1 && pathname.endsWith("/")) {
+      pathname = pathname.slice(0, -1);
+    }
+    if (prefix) {
+      if (!pathname.startsWith(prefix)) {
+        return void 0;
+      }
+      const charAfterPrefix = pathname[prefix.length];
+      if (charAfterPrefix === "/") {
+        pathname = pathname.slice(prefix.length);
+      } else if (charAfterPrefix === void 0) {
+        pathname = "/";
+      } else if (prefix[prefix.length - 1] === "/") {
+        pathname = pathname.slice(prefix.length - 1);
+      } else {
+        return void 0;
+      }
+    }
+    const loading = this.resolvePendingLazyRouters(pathname);
+    if (loading !== void 0) {
+      await loading;
+    }
+    let entry = this.tree.get(pathname);
+    if (entry === void 0 && pathname.includes("%")) {
+      const normalizedPathname = normalizeHttpPath(pathname);
+      const normalizedLoading = this.resolvePendingLazyRouters(normalizedPathname);
+      if (normalizedLoading !== void 0) {
+        await normalizedLoading;
+      }
+      entry = this.tree.get(normalizedPathname);
+    }
+    if (entry === void 0) {
+      return void 0;
+    }
+    const procedure = entry.procedure ?? await this.resolveProcedure(entry);
+    if (this.allowMethodsFn && !this.allowMethodsFn(method, procedure, entry.path)) {
+      return void 0;
+    }
+    return {
+      path: entry.path,
+      procedure
+    };
+  }
+  resolvePendingLazyRouters(pathname) {
+    if (this.pendingLazyRouters.size === 0) {
+      return;
+    }
+    let slashIndex = 0;
+    while (slashIndex !== -1) {
+      const nextSlashIndex = pathname.indexOf("/", slashIndex + 1);
+      const httpPathPrefix = nextSlashIndex === -1 ? pathname : pathname.slice(0, nextSlashIndex);
+      if (this.pendingLazyRouters.has(httpPathPrefix)) {
+        return this.loadPendingLazyRouters(pathname, slashIndex);
+      }
+      slashIndex = nextSlashIndex;
+    }
+  }
+  async loadPendingLazyRouters(pathname, slashIndex) {
+    while (slashIndex !== -1) {
+      const nextSlashIndex = pathname.indexOf("/", slashIndex + 1);
+      const httpPathPrefix = nextSlashIndex === -1 ? pathname : pathname.slice(0, nextSlashIndex);
+      const pending = this.pendingLazyRouters.get(httpPathPrefix);
+      if (pending !== void 0) {
+        await this.loadPendingLazyRouter(httpPathPrefix, pending);
+      }
+      slashIndex = nextSlashIndex;
+    }
+  }
+  loadPendingLazyRouter(httpPathPrefix, pending) {
+    if (pending.loading === void 0) {
+      pending.loading = this.indexPendingLazyRouter(httpPathPrefix, pending).catch((error) => {
+        pending.loading = void 0;
+        throw error;
+      });
+    }
+    return pending.loading;
+  }
+  async indexPendingLazyRouter(httpPathPrefix, pending) {
+    const { default: router } = await unlazy(pending.router);
+    this.index(router, pending.path);
+    this.pendingLazyRouters.delete(httpPathPrefix);
+  }
+  async resolveProcedure(entry) {
+    const { default: maybeProcedure } = await unlazy(getRouter(this.rootRouter, entry.path));
+    if (!(maybeProcedure instanceof Procedure)) {
+      throw new TypeError(
+        `[Contract-First] Missing or invalid implementation for procedure at path: "${entry.path.join(".")}". Ensure the procedure is correctly implemented and matches its contract.`
+      );
+    }
+    entry.procedure = createContractProcedure(maybeProcedure, entry.contract);
+    return entry.procedure;
+  }
+}
+
+class RPCHandlerCodec {
+  matcher;
+  serializer;
+  errorStatusMap;
+  outputStatus;
+  constructor(router, options = {}) {
+    this.matcher = new RPCMatcher(router, options);
+    this.serializer = options.serializer ?? new RPCSerializer();
+    this.errorStatusMap = options.errorStatusMap ?? COMMON_ERROR_STATUS_MAP;
+    this.outputStatus = options.outputStatus;
+  }
+  async resolveProcedure(request, options) {
+    const [pathname, query] = parseStandardUrl(request.url);
+    const matched = await this.matcher.match(request.method, pathname, options.prefix);
+    if (!matched) {
+      return void 0;
+    }
+    return {
+      procedure: matched.procedure,
+      path: matched.path,
+      decodeInput: async () => {
+        if (request.method === "GET") {
+          const dataString = new URLSearchParams(query).getAll("data").at(-1);
+          return this.serializer.deserialize(parseEmptyableJSON(dataString));
+        }
+        const body = await request.resolveBody();
+        return this.serializer.deserialize(body);
+      }
+    };
+  }
+  encodeOutput(output, procedure, path, options) {
+    return {
+      headers: {},
+      status: value(this.outputStatus, output, procedure, path, options) ?? DEFAULT_SUCCESS_STATUS,
+      body: this.serializer.serialize(output)
+    };
+  }
+  encodeError(error, _procedure, _path, _options) {
+    const status = getOwn(this.errorStatusMap, error.code) ?? DEFAULT_ERROR_STATUS;
+    return {
+      headers: {},
+      status,
+      body: this.serializer.serialize(error.toJSON())
+    };
+  }
+}
+
+export { CompositeStandardHandlerPlugin as C, RPCHandlerCodec as R, StandardHandler as S, TracingHandlerPlugin as T, RPCMatcher as a, RPC_DEFAULT_ALLOW_METHODS as b };

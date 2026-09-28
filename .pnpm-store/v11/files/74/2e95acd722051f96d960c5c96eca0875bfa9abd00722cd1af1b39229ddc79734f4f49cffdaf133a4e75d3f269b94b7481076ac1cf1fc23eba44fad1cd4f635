@@ -1,0 +1,173 @@
+interface EventMeta {
+    /**
+     * Event identifier, sent back by the client as `lastEventId` for reconnection attempts.
+     *
+     * @warning id cannot contain newline characters (`\n`)
+     */
+    id?: string | undefined;
+    /**
+     * The number of milliseconds the client should wait before attempting to reconnect.
+     */
+    retry?: number | undefined;
+    /**
+     * Comments associated with the event.
+     *
+     * @warning Comments must not contain newline characters (`\n`).
+     */
+    comments?: string[] | undefined;
+}
+interface EventStreamMessage extends EventMeta {
+    /**
+     * Event name (e.g., `message`, `error`).
+     */
+    event?: string | undefined;
+    /**
+     * Event data, typically JSON-encoded.
+     */
+    data?: string | undefined;
+}
+
+declare function decodeEventStreamMessage(encoded: string): EventStreamMessage;
+declare class EventStreamDecoder {
+    private readonly onEvent;
+    private pending;
+    private tail;
+    private discardLeadingLF;
+    constructor(onEvent: (event: EventStreamMessage) => void);
+    feed(chunk: string): void;
+    end(): void;
+}
+declare class EventStreamDecoderStream {
+    readonly readable: ReadableStream<EventStreamMessage>;
+    readonly writable: WritableStream<string>;
+    constructor();
+}
+
+declare function assertEventStreamMessageId(id: string): void;
+declare function assertEventStreamMessageName(event: string): void;
+declare function assertEventStreamMessageRetry(retry: number): void;
+declare function assertEventStreamMessageComment(comment: string): void;
+declare function encodeEventStreamMessageData(data: string | undefined): string;
+declare function encodeEventStreamMessageComments(comments: readonly string[] | undefined): string;
+declare function encodeEventStreamMessage(message: EventStreamMessage): string;
+
+declare class EventStreamEncoderError extends TypeError {
+}
+declare class EventStreamDecoderError extends TypeError {
+}
+interface ErrorEventOptions extends ErrorOptions {
+    message?: string;
+}
+declare class ErrorEvent extends Error {
+    data: unknown;
+    constructor(data: unknown, options?: ErrorEventOptions);
+}
+
+/**
+ * Returns a new iterator *event value* with attached, validated metadata.
+ */
+declare function withEventMeta<T extends object>(container: T, meta: EventMeta): T;
+/**
+ * Unwraps an iterator event value and extracts its associated metadata.
+ */
+declare function unwrapEvent<T>(container: T): [data: T, meta: EventMeta | undefined];
+/**
+ * Retrieves metadata attached to a single iterator event value.
+ */
+declare function getEventMeta(container: unknown): EventMeta | undefined;
+
+type StandardMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD' | 'QUERY' | (string & {});
+type StandardUrl = `/${string}` | `/${string}?${string}` | `/${string}#${string}` | `/${string}?${string}#${string}`;
+interface StandardHeaders {
+    [key: string]: string | string[] | undefined;
+}
+type StandardBodyHint = 'json' | 'form-data' | 'url-search-params' | 'event-stream' | 'octet-stream' | 'file' | 'none';
+type StandardBody = unknown | URLSearchParams | FormData | AsyncIterator<unknown | void, unknown | void, undefined> | ReadableStream<Uint8Array<ArrayBuffer>> | Blob | undefined;
+interface StandardRequest {
+    /**
+     * @example 'GET', 'POST', etc.
+     */
+    method: StandardMethod;
+    /**
+     * @example `/example`, `/example?query=param#fragment`
+     */
+    url: StandardUrl;
+    /**
+     * @example { 'content-type': 'application/json' }
+     */
+    headers: StandardHeaders;
+    /**
+     * The body has been parsed based on the content headers.
+     */
+    body?: StandardBody | undefined;
+    /**
+     * An AbortSignal to communicate aborting of request.
+     */
+    signal?: AbortSignal | undefined;
+}
+interface StandardLazyRequest extends Omit<StandardRequest, 'body'> {
+    /**
+     * Lazily resolves the body.
+     *
+     * The body is parsed on first call based on the `Content-Type` header
+     * or the provided hint.
+     *
+     * Calling this method may consume the underlying stream.
+     */
+    resolveBody: (hint?: StandardBodyHint | undefined) => Promise<StandardBody>;
+}
+interface StandardResponse {
+    /**
+     * @example 200, 404, 500, etc.
+     */
+    status: number;
+    /**
+     * @example { 'set-cookie': ['sessionId=abc123; HttpOnly'] }
+     */
+    headers: StandardHeaders;
+    /**
+     * The body has been parsed based on the content headers.
+     */
+    body?: StandardBody | undefined;
+}
+interface StandardLazyResponse extends Omit<StandardResponse, 'body'> {
+    /**
+     * Lazily resolves the body.
+     *
+     * The body is parsed on first call based on the `Content-Type` header
+     * or the provided hint.
+     *
+     * Calling this method may consume the underlying stream.
+     */
+    resolveBody: (hint?: StandardBodyHint | undefined) => Promise<StandardBody>;
+}
+
+declare function generateContentDisposition(filename: string, type?: 'inline' | 'attachment'): string;
+declare function getFilenameFromContentDisposition(contentDisposition: string): string | undefined;
+declare function flattenStandardHeader(header: string | readonly string[] | undefined): string | undefined;
+/**
+ * Resolves how a receiver parses a body from the standard headers alone,
+ * mirroring what the body parsers do.
+ */
+declare function resolveStandardBodyHint(headers: {
+    'standard-server'?: undefined | string | string[];
+    'content-type'?: undefined | string | string[];
+    'content-length'?: undefined | string | string[];
+    'content-disposition'?: undefined | string | string[];
+}): StandardBodyHint;
+declare function mergeStandardHeaders(a: StandardHeaders, b: StandardHeaders): StandardHeaders;
+declare function parseStandardUrl(url: StandardUrl): [
+    pathname: `/${string}`,
+    search: `?${string}` | undefined,
+    hash: `#${string}` | undefined
+];
+
+declare function isStandardMethod(maybe: unknown): maybe is StandardMethod;
+declare function isStandardUrl(maybe: unknown): maybe is StandardUrl;
+declare function isStandardHeaders(maybe: unknown): maybe is StandardHeaders;
+declare function isStandardStatus(maybe: unknown): maybe is number;
+declare function isStandardRequest(maybe: unknown): maybe is StandardRequest;
+declare function isStandardResponse(maybe: unknown): maybe is StandardResponse;
+
+export { ErrorEvent, EventStreamDecoder, EventStreamDecoderError, EventStreamDecoderStream, EventStreamEncoderError, assertEventStreamMessageComment, assertEventStreamMessageId, assertEventStreamMessageName, assertEventStreamMessageRetry, decodeEventStreamMessage, encodeEventStreamMessage, encodeEventStreamMessageComments, encodeEventStreamMessageData, flattenStandardHeader, generateContentDisposition, getEventMeta, getFilenameFromContentDisposition, isStandardHeaders, isStandardMethod, isStandardRequest, isStandardResponse, isStandardStatus, isStandardUrl, mergeStandardHeaders, parseStandardUrl, resolveStandardBodyHint, unwrapEvent, withEventMeta };
+export type { ErrorEventOptions, EventMeta, EventStreamMessage, StandardBody, StandardBodyHint, StandardHeaders, StandardLazyRequest, StandardLazyResponse, StandardMethod, StandardRequest, StandardResponse, StandardUrl };

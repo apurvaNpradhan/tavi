@@ -1,0 +1,19 @@
+import { JSX } from 'react';
+import { DevtoolsPanelProps } from './panel.js';
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+export declare function createReactPlugin({ Component, ...config }: {
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+    Component: (props: DevtoolsPanelProps) => JSX.Element;
+}): readonly [() => {
+    render: (_el: HTMLElement, props: TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}, () => {
+    render: (_el: HTMLElement, _props: TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}];

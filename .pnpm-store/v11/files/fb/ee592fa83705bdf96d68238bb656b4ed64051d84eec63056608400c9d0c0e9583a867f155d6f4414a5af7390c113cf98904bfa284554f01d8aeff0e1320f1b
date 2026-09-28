@@ -1,0 +1,255 @@
+import { getAvailableRules } from "../utils/ally-audit.utils.js";
+import { createAllyContext } from "../contexts/allyContext.js";
+import { CATEGORIES, CATEGORY_LABELS, createStyles } from "../styles/styles.js";
+import { classList, className, createComponent, effect, getNextElement, getNextMarker, insert, setAttribute, setProperty, template } from "solid-js/web";
+import { Button, Input, Select } from "@tanstack/devtools-ui";
+import { For, Show, createMemo, createSignal } from "solid-js";
+//#region src/core/components/Settings.tsx
+/** @jsxImportSource solid-js */
+var _tmpl$ = /* @__PURE__ */ template(`<div data-tsd-surface><div data-tsd-surface data-tsd-separator><h3>Settings</h3><!$><!/></div><div data-tsd-surface><div data-tsd-surface><h4>General</h4><div><!$><!/><!$><!/></div></div><div><div><h4>Rules (<!$><!/> total, <!$><!/> disabled)</h4><div><!$><!/><!$><!/></div></div><div><!$><!/><!$><!/></div><div data-tsd-surface>`), _tmpl$2 = /* @__PURE__ */ template(`<span title="Best Practice only">BP`), _tmpl$3 = /* @__PURE__ */ template(`<label data-tsd-surface><input data-tsd-control type=checkbox><div><div><span></span><!$><!/></div><div></div><!$><!/>`), _tmpl$4 = /* @__PURE__ */ template(`<div><span>`);
+function A11ySettingsOverlay(props) {
+	const { config, setConfig } = createAllyContext();
+	const styles = createStyles();
+	const disabledRulesSet = createMemo(() => new Set(config.disabledRules));
+	const availableRules = createMemo(() => getAvailableRules());
+	const [searchString, setSearchString] = createSignal("");
+	const [searchCategory, setSearchCategory] = createSignal("all");
+	const filteredRules = createMemo(() => {
+		const cat = searchCategory();
+		const query = searchString().toLowerCase();
+		return availableRules().filter((rule) => {
+			if (cat !== "all" && !rule.tags.includes(cat)) return false;
+			if (!query) return true;
+			return rule.id.toLowerCase().includes(query) || rule.description.toLowerCase().includes(query);
+		});
+	});
+	return (() => {
+		var _el$ = getNextElement(_tmpl$), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.nextSibling, [_el$5, _co$] = getNextMarker(_el$4.nextSibling), _el$6 = _el$2.nextSibling, _el$7 = _el$6.firstChild, _el$8 = _el$7.firstChild, _el$9 = _el$8.nextSibling, _el$0 = _el$9.firstChild, [_el$1, _co$2] = getNextMarker(_el$0.nextSibling), _el$10 = _el$1.nextSibling, [_el$11, _co$3] = getNextMarker(_el$10.nextSibling), _el$13 = _el$7.nextSibling.firstChild, _el$14 = _el$13.firstChild, _el$19 = _el$14.firstChild.nextSibling, [_el$20, _co$4] = getNextMarker(_el$19.nextSibling), _el$21 = _el$20.nextSibling.nextSibling, [_el$22, _co$5] = getNextMarker(_el$21.nextSibling);
+		_el$22.nextSibling;
+		var _el$23 = _el$14.nextSibling, _el$24 = _el$23.firstChild, [_el$25, _co$6] = getNextMarker(_el$24.nextSibling), _el$26 = _el$25.nextSibling, [_el$27, _co$7] = getNextMarker(_el$26.nextSibling), _el$28 = _el$13.nextSibling, _el$29 = _el$28.firstChild, [_el$30, _co$8] = getNextMarker(_el$29.nextSibling), _el$31 = _el$30.nextSibling, [_el$32, _co$9] = getNextMarker(_el$31.nextSibling), _el$33 = _el$28.nextSibling;
+		insert(_el$2, createComponent(Button, {
+			variant: "secondary",
+			outline: true,
+			get onClick() {
+				return props.onClose;
+			},
+			children: "Done"
+		}), _el$5, _co$);
+		insert(_el$9, createComponent(Select, {
+			label: "Severity Threshold",
+			description: "Only show issues at or above this level",
+			get value() {
+				return config.threshold;
+			},
+			options: [
+				{
+					value: "critical",
+					label: "Critical"
+				},
+				{
+					value: "serious",
+					label: "Serious"
+				},
+				{
+					value: "moderate",
+					label: "Moderate"
+				},
+				{
+					value: "minor",
+					label: "Minor"
+				}
+			],
+			onChange: (value) => {
+				setConfig("threshold", value);
+			}
+		}), _el$1, _co$2);
+		insert(_el$9, createComponent(Select, {
+			label: "Rule Set",
+			description: "WCAG conformance level or standard",
+			get value() {
+				return config.ruleSet;
+			},
+			options: [
+				{
+					value: "wcag2a",
+					label: "WCAG 2.0 A"
+				},
+				{
+					value: "wcag2aa",
+					label: "WCAG 2.0 AA"
+				},
+				{
+					value: "wcag21aa",
+					label: "WCAG 2.1 AA"
+				},
+				{
+					value: "wcag22aa",
+					label: "WCAG 2.2 AA"
+				},
+				{
+					value: "section508",
+					label: "Section 508"
+				},
+				{
+					value: "best-practice",
+					label: "Best Practice"
+				},
+				{
+					value: "all",
+					label: "All Rules"
+				}
+			],
+			onChange: (value) => {
+				setConfig("ruleSet", value);
+			}
+		}), _el$11, _co$3);
+		insert(_el$14, () => availableRules().length, _el$20, _co$4);
+		insert(_el$14, () => config.disabledRules.length, _el$22, _co$5);
+		insert(_el$23, createComponent(Button, {
+			variant: "success",
+			outline: true,
+			onClick: () => setConfig("disabledRules", []),
+			children: "Enable All"
+		}), _el$25, _co$6);
+		insert(_el$23, createComponent(Button, {
+			variant: "danger",
+			outline: true,
+			onClick: () => setConfig("disabledRules", availableRules().map((rule) => rule.id)),
+			children: "Disable All"
+		}), _el$27, _co$7);
+		insert(_el$28, createComponent(Select, {
+			label: "Category",
+			get value() {
+				return searchCategory();
+			},
+			get options() {
+				return CATEGORIES.map((cat) => ({
+					value: cat,
+					label: CATEGORY_LABELS[cat]
+				}));
+			},
+			onChange: (value) => setSearchCategory(value)
+		}), _el$30, _co$8);
+		insert(_el$28, createComponent(Input, {
+			label: "Search",
+			placeholder: "Search rules...",
+			get value() {
+				return searchString();
+			},
+			onChange: (value) => setSearchString(value)
+		}), _el$32, _co$9);
+		insert(_el$33, createComponent(For, {
+			get each() {
+				return filteredRules();
+			},
+			children: (rule, idx) => {
+				const isDisabled = () => disabledRulesSet().has(rule.id);
+				const isBestPracticeOnly = () => rule.tags.includes("best-practice") && !rule.tags.some((tag) => tag.startsWith("wcag") || tag.startsWith("section508"));
+				const categoryTag = () => rule.tags.find((tag) => tag.startsWith("cat."));
+				const hasBorder = () => idx() < filteredRules().length - 1;
+				return (() => {
+					var _el$34 = getNextElement(_tmpl$3), _el$35 = _el$34.firstChild, _el$36 = _el$35.nextSibling, _el$37 = _el$36.firstChild, _el$38 = _el$37.firstChild, _el$40 = _el$38.nextSibling, [_el$41, _co$0] = getNextMarker(_el$40.nextSibling), _el$42 = _el$37.nextSibling, _el$43 = _el$42.nextSibling, [_el$44, _co$1] = getNextMarker(_el$43.nextSibling);
+					_el$35.addEventListener("change", () => setConfig("disabledRules", (rules) => {
+						if (disabledRulesSet().has(rule.id)) return rules.filter((id) => id !== rule.id);
+						else return [...rules, rule.id];
+					}));
+					insert(_el$38, () => rule.id);
+					insert(_el$37, createComponent(Show, {
+						get when() {
+							return isBestPracticeOnly();
+						},
+						get children() {
+							var _el$39 = getNextElement(_tmpl$2);
+							effect(() => className(_el$39, styles().bpBadge));
+							return _el$39;
+						}
+					}), _el$41, _co$0);
+					insert(_el$42, () => rule.description);
+					insert(_el$36, createComponent(Show, {
+						get when() {
+							return categoryTag();
+						},
+						children: (tag) => (() => {
+							var _el$45 = getNextElement(_tmpl$4), _el$46 = _el$45.firstChild;
+							insert(_el$46, () => CATEGORY_LABELS[tag()] || tag().replace("cat.", ""));
+							effect((_p$) => {
+								var _v$21 = styles().catTagRow, _v$22 = styles().catTag;
+								_v$21 !== _p$.e && className(_el$45, _p$.e = _v$21);
+								_v$22 !== _p$.t && className(_el$46, _p$.t = _v$22);
+								return _p$;
+							}, {
+								e: void 0,
+								t: void 0
+							});
+							return _el$45;
+						})()
+					}), _el$44, _co$1);
+					effect((_p$) => {
+						var _v$11 = hasBorder() ? "" : void 0, _v$12 = styles().ruleRow, _v$13 = {
+							[styles().ruleRowDisabled]: isDisabled(),
+							[styles().ruleRowBorder]: hasBorder()
+						}, _v$14 = !isDisabled() ? "true" : void 0, _v$15 = styles().ruleCheckbox, _v$16 = styles().ruleInfo, _v$17 = styles().ruleTop, _v$18 = styles().ruleId, _v$19 = { [styles().ruleIdDisabled]: isDisabled() }, _v$20 = styles().ruleDesc;
+						_v$11 !== _p$.e && setAttribute(_el$34, "data-tsd-separator", _p$.e = _v$11);
+						_v$12 !== _p$.t && className(_el$34, _p$.t = _v$12);
+						_p$.a = classList(_el$34, _v$13, _p$.a);
+						_v$14 !== _p$.o && setAttribute(_el$35, "data-tsd-selected", _p$.o = _v$14);
+						_v$15 !== _p$.i && className(_el$35, _p$.i = _v$15);
+						_v$16 !== _p$.n && className(_el$36, _p$.n = _v$16);
+						_v$17 !== _p$.s && className(_el$37, _p$.s = _v$17);
+						_v$18 !== _p$.h && className(_el$38, _p$.h = _v$18);
+						_p$.r = classList(_el$38, _v$19, _p$.r);
+						_v$20 !== _p$.d && className(_el$42, _p$.d = _v$20);
+						return _p$;
+					}, {
+						e: void 0,
+						t: void 0,
+						a: void 0,
+						o: void 0,
+						i: void 0,
+						n: void 0,
+						s: void 0,
+						h: void 0,
+						r: void 0,
+						d: void 0
+					});
+					effect(() => setProperty(_el$35, "checked", !isDisabled()));
+					return _el$34;
+				})();
+			}
+		}));
+		effect((_p$) => {
+			var _v$ = styles().settingsOverlay, _v$2 = styles().settingsHeader, _v$3 = styles().settingsTitle, _v$4 = styles().settingsContent, _v$5 = styles().settingsSection, _v$6 = styles().settingsSectionLabel, _v$7 = styles().settingsRowStack, _v$8 = styles().rulesHeaderRow, _v$9 = styles().settingsSectionLabel, _v$0 = styles().rulesHeaderActions, _v$1 = styles().filtersRow, _v$10 = styles().rulesList;
+			_v$ !== _p$.e && className(_el$, _p$.e = _v$);
+			_v$2 !== _p$.t && className(_el$2, _p$.t = _v$2);
+			_v$3 !== _p$.a && className(_el$3, _p$.a = _v$3);
+			_v$4 !== _p$.o && className(_el$6, _p$.o = _v$4);
+			_v$5 !== _p$.i && className(_el$7, _p$.i = _v$5);
+			_v$6 !== _p$.n && className(_el$8, _p$.n = _v$6);
+			_v$7 !== _p$.s && className(_el$9, _p$.s = _v$7);
+			_v$8 !== _p$.h && className(_el$13, _p$.h = _v$8);
+			_v$9 !== _p$.r && className(_el$14, _p$.r = _v$9);
+			_v$0 !== _p$.d && className(_el$23, _p$.d = _v$0);
+			_v$1 !== _p$.l && className(_el$28, _p$.l = _v$1);
+			_v$10 !== _p$.u && className(_el$33, _p$.u = _v$10);
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0,
+			o: void 0,
+			i: void 0,
+			n: void 0,
+			s: void 0,
+			h: void 0,
+			r: void 0,
+			d: void 0,
+			l: void 0,
+			u: void 0
+		});
+		return _el$;
+	})();
+}
+//#endregion
+export { A11ySettingsOverlay };
+
+//# sourceMappingURL=Settings.js.map

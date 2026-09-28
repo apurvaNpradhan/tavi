@@ -1,0 +1,11 @@
+import { A11yDevtoolsPanel } from "./A11yDevtools.js";
+import { createAngularPlugin } from "@tanstack/devtools-utils/angular";
+//#region src/angular/production/plugin.ts
+var [a11yDevtoolsPlugin] = createAngularPlugin({
+	name: "TanStack A11y",
+	render: A11yDevtoolsPanel
+});
+//#endregion
+export { a11yDevtoolsPlugin };
+
+//# sourceMappingURL=plugin.js.map

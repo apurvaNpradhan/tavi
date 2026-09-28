@@ -1,0 +1,367 @@
+import { COMMON_ERROR_STATUS_MAP } from '@orpc/client';
+import { walkProcedureContractsSync, Procedure, unlazy, getRouter, createContractProcedure, DEFAULT_SUCCESS_STATUS, DEFAULT_ERROR_STATUS } from '@orpc/server';
+import { value, pathToHttpPath, mergeHttpPath, normalizeHttpPath, safeDecodeURIComponent, NullProtoObj, isTypescriptObject, isPlainObject, stringifyJSON, getOwn, parseEmptyableJSON } from '@orpc/shared';
+import { parseStandardUrl } from '@standard-server/core';
+import { D as DEFAULT_OPENAPI_METHOD, g as getDynamicPathParams, O as OpenAPISerializer, a as DEFAULT_OPENAPI_INPUT_STRUCTURE, i as isBodylessMethod, b as DEFAULT_OPENAPI_OUTPUT_STRUCTURE } from './openapi.B1LWf28E.mjs';
+import { g as getOpenAPIMeta } from './openapi.B9PQzqBn.mjs';
+import { createRouter, addRoute, findRoute, routeToRegExp } from 'rou3';
+
+class OpenAPIMatcher {
+  filter;
+  rootRouter;
+  tree = createRouter();
+  pendingLazyRouters = /* @__PURE__ */ new Set();
+  constructor(router, options = {}) {
+    this.filter = options.filter ?? true;
+    this.rootRouter = router;
+    this.index(router);
+  }
+  index(router, path = []) {
+    const lazyResults = walkProcedureContractsSync(router, (contract, path2) => {
+      if (!value(this.filter, contract, path2)) {
+        return;
+      }
+      const meta = getOpenAPIMeta(contract);
+      const method = meta?.method ?? DEFAULT_OPENAPI_METHOD;
+      const postHttpPath = meta?.path ?? pathToHttpPath(path2);
+      const openapiPath = meta?.prefix ? mergeHttpPath(meta.prefix, postHttpPath) : postHttpPath;
+      const rou3Path = toRou3Pattern(openapiPath);
+      addRoute(this.tree, method, rou3Path, {
+        path: path2,
+        contract,
+        procedure: contract instanceof Procedure ? contract : void 0
+      });
+    }, path);
+    for (const result of lazyResults) {
+      const prefix = getOpenAPIMeta(result.router)?.prefix;
+      this.pendingLazyRouters.add({
+        ...result,
+        matcher: prefix ? toRou3PrefixMatcher(prefix) : void 0
+      });
+    }
+  }
+  async match(method, pathname, prefix) {
+    if (prefix) {
+      if (!pathname.startsWith(prefix)) {
+        return void 0;
+      }
+      const charAfterPrefix = pathname[prefix.length];
+      if (charAfterPrefix === "/") {
+        pathname = pathname.slice(prefix.length);
+      } else if (charAfterPrefix === void 0) {
+        pathname = "/";
+      } else if (prefix[prefix.length - 1] === "/") {
+        pathname = pathname.slice(prefix.length - 1);
+      } else {
+        return void 0;
+      }
+    }
+    const loading = this.resolvePendingLazyRouters(pathname);
+    if (loading !== void 0) {
+      await loading;
+    }
+    let match = findRoute(this.tree, method, pathname);
+    if (match === void 0 && pathname.includes("%")) {
+      const normalizedPathname = normalizeHttpPath(pathname);
+      const normalizedLoading = this.resolvePendingLazyRouters(normalizedPathname);
+      if (normalizedLoading !== void 0) {
+        await normalizedLoading;
+      }
+      match = findRoute(this.tree, method, normalizedPathname);
+    }
+    if (match === void 0) {
+      return void 0;
+    }
+    const entry = match.data;
+    return {
+      path: entry.path,
+      procedure: entry.procedure ?? await this.resolveProcedure(entry),
+      params: match.params ? decodeParams(match.params) : void 0
+    };
+  }
+  resolvePendingLazyRouters(pathname) {
+    for (const pending of this.pendingLazyRouters) {
+      if (pending.matcher === void 0 || pending.matcher.test(pathname)) {
+        return this.loadPendingLazyRouters(pathname);
+      }
+    }
+  }
+  async loadPendingLazyRouters(pathname) {
+    for (const pending of this.pendingLazyRouters) {
+      if (pending.matcher === void 0 || pending.matcher.test(pathname)) {
+        await this.loadPendingLazyRouter(pending);
+      }
+    }
+  }
+  loadPendingLazyRouter(pending) {
+    if (pending.loading === void 0) {
+      pending.loading = this.indexPendingLazyRouter(pending).catch((error) => {
+        pending.loading = void 0;
+        throw error;
+      });
+    }
+    return pending.loading;
+  }
+  async indexPendingLazyRouter(pending) {
+    const { default: router } = await unlazy(pending.router);
+    this.index(router, pending.path);
+    this.pendingLazyRouters.delete(pending);
+  }
+  async resolveProcedure(entry) {
+    const { default: maybeProcedure } = await unlazy(getRouter(this.rootRouter, entry.path));
+    if (!(maybeProcedure instanceof Procedure)) {
+      throw new TypeError(
+        `[Contract-First] Missing or invalid implementation for procedure at path: "${entry.path.join(".")}". Ensure the procedure is correctly implemented and matches its contract.`
+      );
+    }
+    entry.procedure = createContractProcedure(maybeProcedure, entry.contract);
+    return entry.procedure;
+  }
+}
+function toRou3Pattern(path) {
+  const params = getDynamicPathParams(path);
+  if (!params?.length) {
+    return path;
+  }
+  for (let i = params.length - 1; i >= 0; i--) {
+    const param = params[i];
+    const pattern = param.allowsSlash ? `**:${param.parameterName}` : `:${param.parameterName}`;
+    path = path.slice(0, param.startIndex) + pattern + path.slice(param.startIndex + param.segment.length);
+  }
+  return path;
+}
+function toRou3PrefixMatcher(path) {
+  const pattern = toRou3Pattern(path);
+  return routeToRegExp(pattern === "/" ? "/**" : `${pattern}/**`);
+}
+function decodeParams(params) {
+  return Object.fromEntries(Object.entries(params).map(([key, val]) => [key, safeDecodeURIComponent(val)]));
+}
+
+function serializeHeaders(headers, serializer) {
+  const result = new NullProtoObj();
+  for (const [key, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      const lines = [];
+      for (const item of value) {
+        const line2 = serializeHeaderValue(item, serializer);
+        if (line2 !== void 0) {
+          lines.push(line2);
+        }
+      }
+      result[key] = lines;
+      continue;
+    }
+    const line = serializeHeaderValue(value, serializer);
+    if (line !== void 0) {
+      result[key] = line;
+    }
+  }
+  return result;
+}
+function serializeHeaderValue(value, serializer) {
+  const serialized = serializer.serialize(value);
+  if (Array.isArray(serialized)) {
+    return serialized.filter((item) => item !== void 0 && item !== null).map(String).join(",");
+  }
+  if (isTypescriptObject(serialized)) {
+    return Object.entries(serialized).filter(([, val]) => val !== void 0 && val !== null).map(([key, val]) => `${String(key)},${String(val)}`).join(",");
+  }
+  if (serialized !== void 0 && serialized !== null) {
+    return String(serialized);
+  }
+  return void 0;
+}
+
+class OpenAPIHandlerCodecCore {
+  serializer;
+  errorStatusMap;
+  customErrorResponseBodySerializer;
+  constructor(options = {}) {
+    this.serializer = options.serializer ?? new OpenAPISerializer();
+    this.errorStatusMap = options.errorStatusMap ?? COMMON_ERROR_STATUS_MAP;
+    this.customErrorResponseBodySerializer = options.customErrorResponseBodyEncoder;
+  }
+  async decodeInput(matched, request) {
+    const [_, search] = parseStandardUrl(request.url);
+    const meta = getOpenAPIMeta(matched.procedure);
+    const inputStructure = meta?.inputStructure ?? DEFAULT_OPENAPI_INPUT_STRUCTURE;
+    const params = this.deserializeParams(matched.params, meta?.paramsStyles);
+    const query = this.deserializeQuery(search, meta?.queryStyles);
+    if (inputStructure === "compact") {
+      const data = isBodylessMethod(request.method) ? query : this.serializer.deserialize(await request.resolveBody(meta?.requestBodyHint));
+      if (data === void 0) {
+        return params;
+      }
+      if (!params || Object.keys(params).length < 1) {
+        return data;
+      }
+      if (!isPlainObject(data)) {
+        return params;
+      }
+      return {
+        ...data,
+        ...params
+      };
+    }
+    return {
+      params,
+      query,
+      headers: request.headers,
+      body: this.serializer.deserialize(await request.resolveBody(meta?.requestBodyHint))
+    };
+  }
+  /**
+   * @throws {TypeError} If `outputStructure` is "detailed" and the output doesn't match the expected structure.
+   */
+  encodeOutput(output, procedure, path) {
+    const meta = getOpenAPIMeta(procedure);
+    const successStatus = meta?.successStatus ?? DEFAULT_SUCCESS_STATUS;
+    const outputStructure = meta?.outputStructure ?? DEFAULT_OPENAPI_OUTPUT_STRUCTURE;
+    if (outputStructure === "compact") {
+      return {
+        status: successStatus,
+        headers: {},
+        body: this.serializer.serialize(output)
+      };
+    }
+    if (!isValidDetailedOutput(output)) {
+      throw new TypeError(`
+        Invalid "detailed" output structure returned by procedure (${path.join(".")}):
+        \u2022 Expected an object with optional properties:
+          - status (number <400)
+          - headers (object)
+          - body (any)
+        \u2022 No extra keys allowed.
+
+        Actual value:
+          ${stringifyJSON(output)}
+      `);
+    }
+    return {
+      status: output.status ?? successStatus,
+      headers: output.headers !== void 0 ? serializeHeaders(output.headers, this.serializer) : {},
+      body: this.serializer.serialize(output.body)
+    };
+  }
+  encodeError(error) {
+    const status = getOwn(this.errorStatusMap, error.code) ?? DEFAULT_ERROR_STATUS;
+    return {
+      status,
+      headers: {},
+      body: this.serializer.serialize(this.customErrorResponseBodySerializer?.(error) ?? error.toJSON())
+    };
+  }
+  deserializeQuery(search, styles) {
+    const searchParams = new URLSearchParams(search);
+    const parsed = this.serializer.deserialize(searchParams);
+    if (!styles || !isPlainObject(parsed)) {
+      return parsed;
+    }
+    Object.entries(styles).forEach(([key, hint]) => {
+      if (hint === void 0) {
+        return;
+      }
+      const values = searchParams.getAll(key);
+      let parsedValue;
+      if (hint === "primitive") {
+        parsedValue = values.at(-1);
+      } else if (hint === "array") {
+        parsedValue = values;
+      } else if (hint === "comma-delimited-array") {
+        parsedValue = decodeDelimitedArray(values.at(-1), ",");
+      } else if (hint === "comma-delimited-object") {
+        parsedValue = decodeDelimitedObject(values.at(-1), ",");
+      } else if (hint === "space-delimited-array") {
+        parsedValue = decodeDelimitedArray(values.at(-1), " ");
+      } else if (hint === "space-delimited-object") {
+        parsedValue = decodeDelimitedObject(values.at(-1), " ");
+      } else if (hint === "pipe-delimited-array") {
+        parsedValue = decodeDelimitedArray(values.at(-1), "|");
+      } else if (hint === "pipe-delimited-object") {
+        parsedValue = decodeDelimitedObject(values.at(-1), "|");
+      } else {
+        const last = values.at(-1);
+        try {
+          parsedValue = parseEmptyableJSON(last);
+        } catch {
+          parsedValue = last;
+        }
+      }
+      parsed[key] = this.serializer.deserialize(parsedValue);
+    });
+    return parsed;
+  }
+  deserializeParams(params, styles) {
+    if (!params || !styles) {
+      return params;
+    }
+    const parsed = { ...params };
+    Object.entries(styles).forEach(([key, hint]) => {
+      if (hint === void 0 || hint === "primitive") {
+        return;
+      }
+      const value = params[key];
+      if (hint === "comma-delimited-array") {
+        parsed[key] = decodeDelimitedArray(value, ",");
+      } else {
+        parsed[key] = decodeDelimitedObject(value, ",");
+      }
+    });
+    return parsed;
+  }
+}
+class OpenAPIHandlerCodec extends OpenAPIHandlerCodecCore {
+  matcher;
+  constructor(router, options = {}) {
+    super(options);
+    this.matcher = new OpenAPIMatcher(router, options);
+  }
+  async resolveProcedure(request, options) {
+    const [pathname] = parseStandardUrl(request.url);
+    const matched = await this.matcher.match(request.method, pathname, options.prefix);
+    if (!matched) {
+      return void 0;
+    }
+    return {
+      procedure: matched.procedure,
+      path: matched.path,
+      decodeInput: () => this.decodeInput(matched, request)
+    };
+  }
+}
+function isValidDetailedOutput(output) {
+  if (!isTypescriptObject(output)) {
+    return false;
+  }
+  if (Object.keys(output).some((key) => key !== "status" && key !== "headers" && key !== "body")) {
+    return false;
+  }
+  if (output.status !== void 0 && (typeof output.status !== "number" || !Number.isInteger(output.status) || output.status > 399)) {
+    return false;
+  }
+  if (output.headers !== void 0 && !isTypescriptObject(output.headers)) {
+    return false;
+  }
+  return true;
+}
+function decodeDelimitedArray(value, delimiter) {
+  if (value === void 0) {
+    return void 0;
+  }
+  return value.split(delimiter);
+}
+function decodeDelimitedObject(value, delimiter) {
+  if (value === void 0) {
+    return void 0;
+  }
+  const obj = new NullProtoObj();
+  const parts = value.split(delimiter);
+  for (let i = 0; i < parts.length; i += 2) {
+    const key = parts[i];
+    obj[key] = parts[i + 1];
+  }
+  return obj;
+}
+
+export { OpenAPIHandlerCodec as O, OpenAPIHandlerCodecCore as a, OpenAPIMatcher as b, serializeHeaders as s };

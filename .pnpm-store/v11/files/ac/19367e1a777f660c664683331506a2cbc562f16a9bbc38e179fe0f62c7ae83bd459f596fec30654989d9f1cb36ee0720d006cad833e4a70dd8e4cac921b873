@@ -1,0 +1,14 @@
+import DevtoolsPanel from "./DevtoolsPanel.js";
+import NoOp from "./NoOp.js";
+//#region src/svelte/panel.ts
+function createSveltePanel(CoreClass) {
+	const Panel = (internals, props) => DevtoolsPanel(internals, {
+		CoreClass,
+		pluginProps: props
+	});
+	return [Panel, NoOp];
+}
+//#endregion
+export { createSveltePanel };
+
+//# sourceMappingURL=panel.js.map

@@ -1,0 +1,433 @@
+import { E as ErrorMap, A as AnySchema, P as ProcedureContract, M as MetaPlugin, a as MergedSchema, b as Meta, c as AnyMetaPlugin, R as RouterContract, d as AnyProcedureContract, S as Schema, I as InferSchemaInput, e as InferSchemaOutput, O as ORPCErrorFromErrorMap, f as ErrorMapItem, g as SchemaIssue } from './shared/contract.CQzrFGcD.mjs';
+export { H as HIDDEN_META_PLUGINS_SYMBOL, h as InferContractRouterErrorMap, i as InferContractRouterInputs, j as InferContractRouterOutputs, k as InferRouterContractError, h as InferRouterContractErrorMap, l as InferRouterContractErrors, i as InferRouterContractInputs, j as InferRouterContractOutputs, m as MetaPluginDefinition, n as ProcedureContractDefinition, V as ValidationError, o as ValidationErrorOptions, p as getHiddenMetaPlugins, s as setHiddenMetaPlugins } from './shared/contract.CQzrFGcD.mjs';
+import { AnyORPCError, ClientContext, Client, ORPCClientOptions, ClientLink, ORPCErrorCode, ORPCErrorOptions, ORPCError } from '@orpc/client';
+export { Client, ClientContext, ClientOptions, ClientRest, FriendlyClientOptions } from '@orpc/client';
+import { ThrowableError, MaybeOptionalOptions, AsyncIteratorClass, Promisable, IsEqual } from '@orpc/shared';
+export { PromiseWithError, Registry, ThrowableError } from '@orpc/shared';
+import '@standard-schema/spec';
+
+type MergedErrorMap<T1 extends ErrorMap, T2 extends ErrorMap> = keyof T1 extends never | keyof T2 ? T2 : Omit<T1, keyof T2> & T2;
+declare function mergeErrorMap<T1 extends ErrorMap = object, T2 extends ErrorMap = object>(errorMap1: T1 | undefined, errorMap2: T2 | undefined): MergedErrorMap<T1, T2>;
+declare function reconcileORPCError(map: ErrorMap, error: AnyORPCError): Promise<AnyORPCError>;
+
+/**
+ * The contract builder variant returned after `.input` is called.
+ * It is already a complete procedure contract that can still be refined.
+ *
+ * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+ */
+interface ProcedureContractBuilderWithInput<TInputSchema extends AnySchema, TErrorMap extends ErrorMap> extends ProcedureContract<TInputSchema, InitialOutputSchema, TErrorMap> {
+    /**
+     * Applies metadata plugins to contracts built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#metadata | Procedure Contract - Metadata}
+     */
+    meta(...plugins: MetaPlugin<TInputSchema, InitialOutputSchema, TErrorMap>[]): ProcedureContractBuilderWithInput<TInputSchema, TErrorMap>;
+    /**
+     * Defines typesafe errors that implementations of this contract can throw.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#typesafe-errors | Procedure Contract - Typesafe Errors}
+     */
+    errors<T extends ErrorMap>(errors: T): ProcedureContractBuilderWithInput<TInputSchema, MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Adds an additional input schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#multiple-schemas | Procedure Contract - Multiple Schemas}
+     */
+    input<T extends AnySchema>(schema: T): ProcedureContractBuilderWithInput<MergedSchema<T, TInputSchema>, TErrorMap>;
+    /**
+     * Defines the output schema used to validate and type the procedure output.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#inputoutput-validation | Procedure Contract - Input/Output Validation}
+     */
+    output<T extends AnySchema>(schema: T): ProcedureContractBuilderWithInputOutput<TInputSchema, T, TErrorMap>;
+}
+/**
+ * The contract builder variant returned after `.output` is called.
+ * It is already a complete procedure contract that can still be refined.
+ *
+ * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+ */
+interface ProcedureContractBuilderWithOutput<TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> extends ProcedureContract<InitialInputSchema, TOutputSchema, TErrorMap> {
+    /**
+     * Applies metadata plugins to contracts built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#metadata | Procedure Contract - Metadata}
+     */
+    meta(...plugins: MetaPlugin<InitialInputSchema, TOutputSchema, TErrorMap>[]): ProcedureContractBuilderWithOutput<TOutputSchema, TErrorMap>;
+    /**
+     * Defines typesafe errors that implementations of this contract can throw.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#typesafe-errors | Procedure Contract - Typesafe Errors}
+     */
+    errors<T extends ErrorMap>(errors: T): ProcedureContractBuilderWithOutput<TOutputSchema, MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Defines the input schema used to validate and type the procedure input.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#inputoutput-validation | Procedure Contract - Input/Output Validation}
+     */
+    input<T extends AnySchema>(schema: T): ProcedureContractBuilderWithInputOutput<T, TOutputSchema, TErrorMap>;
+    /**
+     * Adds an additional output schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#multiple-schemas | Procedure Contract - Multiple Schemas}
+     */
+    output<T extends AnySchema>(schema: T): ProcedureContractBuilderWithOutput<MergedSchema<T, TOutputSchema>, TErrorMap>;
+}
+/**
+ * The contract builder variant returned after both `.input` and `.output`
+ * are called. It is already a complete procedure contract that can still be
+ * refined.
+ *
+ * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+ */
+interface ProcedureContractBuilderWithInputOutput<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> extends ProcedureContract<TInputSchema, TOutputSchema, TErrorMap> {
+    /**
+     * Applies metadata plugins to contracts built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#metadata | Procedure Contract - Metadata}
+     */
+    meta(...plugins: MetaPlugin<TInputSchema, TOutputSchema, TErrorMap>[]): ProcedureContractBuilderWithInputOutput<TInputSchema, TOutputSchema, TErrorMap>;
+    /**
+     * Defines typesafe errors that implementations of this contract can throw.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#typesafe-errors | Procedure Contract - Typesafe Errors}
+     */
+    errors<T extends ErrorMap>(errors: T): ProcedureContractBuilderWithInputOutput<TInputSchema, TOutputSchema, MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Adds an additional input schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#multiple-schemas | Procedure Contract - Multiple Schemas}
+     */
+    input<T extends AnySchema>(schema: T): ProcedureContractBuilderWithInputOutput<MergedSchema<T, TInputSchema>, TOutputSchema, TErrorMap>;
+    /**
+     * Adds an additional output schema, merged with the previously defined one.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#multiple-schemas | Procedure Contract - Multiple Schemas}
+     */
+    output<T extends AnySchema>(schema: T): ProcedureContractBuilderWithInputOutput<TInputSchema, MergedSchema<T, TOutputSchema>, TErrorMap>;
+}
+
+type AugmentedContractRouter<T extends RouterContract, TErrorMap extends ErrorMap> = T extends ProcedureContract<infer $InputSchema, infer $OutputSchema, infer $Errors> ? ProcedureContract<$InputSchema, $OutputSchema, MergedErrorMap<TErrorMap, $Errors>> : {
+    [K in keyof T]: T[K] extends RouterContract ? AugmentedContractRouter<T[K], TErrorMap> : never;
+};
+interface AugmentContractRouterOptions<TErrorMap extends ErrorMap> {
+    meta: Meta;
+    metaPlugins?: AnyMetaPlugin[] | undefined;
+    errorMap: TErrorMap;
+}
+/**
+ * Add capabilities without changing identity of the router contract
+ */
+declare function augmentContractRouter<T extends RouterContract, TErrorMap extends ErrorMap>(router: T, options: AugmentContractRouterOptions<TErrorMap>): AugmentedContractRouter<T, TErrorMap>;
+declare function getRouterContract(router: RouterContract, path: readonly string[]): RouterContract | undefined;
+declare function getProcedureContractOrThrow(router: RouterContract, path: readonly string[]): AnyProcedureContract;
+/**
+ * Minifies a router contract so it can be safely exported to the client
+ * without exposing internal logic.
+ *
+ * @remarks
+ * **Note**: Only the metadata needed by the client is preserved; all other data is stripped out.
+ *
+ * @see {@link https://orpc.dev/docs/contract/router | Router Contract}
+ */
+declare function minifyRouterContract(router: RouterContract): RouterContract;
+
+/**
+ * The input schema type used before `.input` is called.
+ * Input is `void` for better compatibility with third-party libraries,
+ * such as TanStack Query, which allow calling mutations without input.
+ */
+type InitialInputSchema = Schema<void, unknown>;
+/**
+ * The output schema type used before `.output` is called.
+ */
+type InitialOutputSchema = Schema<unknown>;
+/**
+ * The contract builder behind `oc`. Chain its methods to define procedure
+ * contracts — metadata, errors, and input/output schemas — without any
+ * business logic.
+ *
+ * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+ */
+declare class ContractBuilder<TErrorMap extends ErrorMap> extends ProcedureContract<InitialInputSchema, InitialOutputSchema, TErrorMap> {
+    /**
+     * Private constructor to prevent direct instantiation.
+     * Use the static `create` method to initialize a new instance with a safe initial definition.
+     */
+    private constructor();
+    /**
+     * Creates a fresh contract builder with an empty definition.
+     * Prefer the exported `oc` instance over calling this directly.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+     */
+    static create(): ContractBuilder<object>;
+    /**
+     * Applies metadata plugins to contracts built from this builder.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#metadata | Procedure Contract - Metadata}
+     */
+    meta(...plugins: MetaPlugin<InitialInputSchema, InitialOutputSchema, TErrorMap>[]): ContractBuilder<TErrorMap>;
+    /**
+     * Defines typesafe errors that implementations of this contract can throw.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#typesafe-errors | Procedure Contract - Typesafe Errors}
+     */
+    errors<T extends ErrorMap>(errors: T): ContractBuilder<MergedErrorMap<TErrorMap, T>>;
+    /**
+     * Defines the input schema used to validate and type the procedure input.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#inputoutput-validation | Procedure Contract - Input/Output Validation}
+     */
+    input<T extends AnySchema>(schema: T): ProcedureContractBuilderWithInput<T, TErrorMap>;
+    /**
+     * Defines the output schema used to validate and type the procedure output.
+     *
+     * @see {@link https://orpc.dev/docs/contract/procedure#inputoutput-validation | Procedure Contract - Input/Output Validation}
+     */
+    output<T extends AnySchema>(schema: T): ProcedureContractBuilderWithOutput<T, TErrorMap>;
+    /**
+     * Applies the builder's errors and metadata to every procedure contract in
+     * the given router contract.
+     *
+     * @see {@link https://orpc.dev/docs/contract/router#extending-router | Router Contract - Extending Router}
+     */
+    router<T extends RouterContract>(router: T): AugmentedContractRouter<T, TErrorMap>;
+}
+/**
+ * The oRPC contract builder. Chain methods like `.input`, `.errors`, and
+ * `.output` to define procedure contracts, then compose them into router
+ * contracts.
+ *
+ * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+ */
+declare const oc: ContractBuilder<object>;
+
+type ProcedureContractClient<TClientContext extends ClientContext, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> = Client<TClientContext, InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>, ORPCErrorFromErrorMap<TErrorMap> | ThrowableError>;
+
+/**
+ * Client type inferred from a router contract, preserving its shape.
+ * Useful for typing a client without importing the server router.
+ *
+ * @see {@link https://orpc.dev/docs/client/client-side | Client-Side Clients}
+ */
+type RouterContractClient<TRouter extends RouterContract, TClientContext extends ClientContext = object> = TRouter extends ProcedureContract<infer UInputSchema, infer UOutputSchema, infer UErrorMap> ? ProcedureContractClient<TClientContext, UInputSchema, UOutputSchema, UErrorMap> : {
+    [K in keyof TRouter]: TRouter[K] extends RouterContract ? RouterContractClient<TRouter[K], TClientContext> : never;
+};
+
+interface ContractClientFactory<TClientContext extends ClientContext> {
+    <T extends RouterContract>(contract: T): RouterContractClient<T, TClientContext>;
+}
+interface ContractClientFactoryOptions<TClientContext extends ClientContext> extends Pick<ORPCClientOptions<RouterContractClient<RouterContract, TClientContext>>, 'interceptors' | 'scoped'> {
+    /**
+     * An optional reference to the root router-contract.
+     * When provided, the client factory will automatically register the passed contract
+     * into the router at the path defined by `meta.path`.
+     */
+    contractRef?: undefined | RouterContract;
+}
+/**
+ * Creates a client factory that builds a client from any procedure or router contract,
+ * so large projects can import individual contracts instead of a single root client.
+ *
+ * @remarks
+ * **Warning**: Every procedure contract passed to the factory must define `meta.path` matching its location in the root contract.
+ *
+ * @see {@link https://orpc.dev/docs/contract/client-factory | Contract Client Factory}
+ */
+declare function createContractClientFactory<TClientContext extends ClientContext>(link: ClientLink<TClientContext>, options?: ContractClientFactoryOptions<TClientContext>): ContractClientFactory<TClientContext>;
+
+interface ORPCErrorFactoryOptions<TData> {
+    /**
+     * Optional schema used to type and validate the error data.
+     * Must be a synchronous schema.
+     */
+    data?: Schema<TData>;
+    /**
+     * Optional default message, can be overridden when constructing an error.
+     */
+    message?: string;
+}
+interface ORPCErrorFactory<TCode extends ORPCErrorCode, TData> extends ErrorMapItem {
+    code: TCode;
+    data: Schema<TData>;
+    new (...rest: MaybeOptionalOptions<ORPCErrorOptions<TData>>): ORPCError<TCode, TData>;
+}
+/**
+ * Creates a reusable error class ({@link ORPCErrorFactory}) for the given code,
+ * default message, and data schema.
+ *
+ * @example
+ * ```ts
+ * const RateLimitedError = error('RATE_LIMITED', {
+ *   message: 'You are being rate limited',
+ *   data: z.object({ retryAfter: z.number() }),
+ * })
+ *
+ * const procedure = os
+ *   .errors({ [RateLimitedError.code]: RateLimitedError })
+ *   .handler(() => {
+ *     throw new RateLimitedError({ data: { retryAfter: 60 } })
+ *   })
+ *
+ * try {
+ *   const output = call(procedure)
+ * } catch (error) {
+ *   if (error instanceof RateLimitedError) {
+ *     console.log(error.data.retryAfter)
+ *   }
+ * }
+ * ```
+ *
+ * @see {@link https://orpc.dev/docs/error-handling#error-factory | Error Handling - Error Factory}
+ */
+declare function error<TCode extends ORPCErrorCode, TData = unknown>(code: TCode, { data: dataSchema, message }?: ORPCErrorFactoryOptions<TData>): ORPCErrorFactory<TCode, TData>;
+type ORPCErrorConstructorMapItemOptions<TData> = Omit<ORPCErrorOptions<TData>, 'status'>;
+interface ORPCErrorConstructorMapItem<TCode extends ORPCErrorCode, TInData> {
+    (...rest: MaybeOptionalOptions<ORPCErrorConstructorMapItemOptions<TInData>>): ORPCError<TCode, TInData>;
+}
+type ORPCErrorConstructorMap<T extends ErrorMap> = {
+    [K in keyof T]: T[K] extends ErrorMapItem ? ORPCErrorConstructorMapItem<K & ORPCErrorCode, T[K]['data'] extends AnySchema ? InferSchemaInput<T[K]['data']> : unknown> : never;
+};
+/**
+ * Creates a map of ORPC error constructors.
+ *
+ * The returned object is a `Proxy` that allows access to arbitrary error codes:
+ * - If the code exists in the provided `errorMap`, the corresponding constructor
+ *   will create a **defined** `ORPCError`.
+ * - If the code does not exist, a fallback `ORPCError` constructor is returned.
+ *
+ * The `in` operator can be used to check whether an error code is explicitly
+ * defined in the map.
+ *
+ * @example
+ * ```ts
+ * const errorMap = createORPCErrorConstructorMap({
+ *   NOT_FOUND: {
+ *     message: 'Not Found',
+ *   },
+ * })
+ *
+ * throw errorMap.NOT_FOUND()
+ * ```
+ */
+declare function createORPCErrorConstructorMap<T extends ErrorMap>(errorMap: T): ORPCErrorConstructorMap<T>;
+
+interface PathMetaPlugin<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> extends MetaPlugin<TInputSchema, TOutputSchema, TErrorMap> {
+    name: '~path';
+}
+/**
+ * Built-in metadata plugins.
+ * `meta.path` records a procedure contract's path inside the root contract,
+ * which is required for the contract client factory pattern.
+ *
+ * @see {@link https://orpc.dev/docs/contract/client-factory | Contract Client Factory}
+ */
+declare const meta: {
+    path<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap>(path: string[]): PathMetaPlugin<TInputSchema, TOutputSchema, TErrorMap>;
+};
+declare function getPathMeta(procedureOrLazy: {
+    '~orpc': {
+        meta: Meta;
+    };
+}): string[] | undefined;
+/**
+ * Resolve the base path of a contract from the first procedure-contract
+ * that defines `meta.path`: its `meta.path` minus its path inside the given contract.
+ * For a procedure-contract, this is its `meta.path` itself.
+ *
+ * Returns `undefined` when no procedure-contract defines `meta.path`.
+ */
+declare function resolveBasePathMeta(contract: RouterContract, currentPath?: string[]): string[] | undefined;
+
+declare function resolveMetaPlugins<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap>(baseMeta: Meta, existingPlugins: MetaPlugin<TInputSchema, TOutputSchema, TErrorMap>[] | undefined, incomingPlugins: MetaPlugin<TInputSchema, TOutputSchema, TErrorMap>[] | undefined): [meta: Meta, plugins: MetaPlugin<TInputSchema, TOutputSchema, TErrorMap>[]];
+/**
+ * Quickly defines a meta plugin factory and reader.
+ *
+ * @example Mark a procedure as requiring authentication and read it in middleware.
+ * ```ts
+ * interface AuthMeta {
+ *   required?: boolean
+ *   scope?: 'user' | 'admin'
+ * }
+ *
+ * const [authMeta, getAuthMeta] = defineMeta(
+ *   'auth',
+ *   (incoming: AuthMeta, current) => ({ ...current, ...incoming }),
+ * )
+ *
+ * const deletePostContract = oc
+ *   .meta(authMeta({ required: true, scope: 'admin' }))
+ *   .input(z.object({ postId: z.string() }))
+ *   .output(z.object({ success: z.boolean() }))
+ *
+ * const authMiddleware = os.middleware(async ({ context, procedure, next }) => {
+ *   const auth = getAuthMeta(procedure)
+ *
+ *   if (auth?.required && !context.user) {
+ *     throw new ORPCError('UNAUTHORIZED')
+ *   }
+ *
+ *   if (auth?.scope === 'admin' && !context.user?.isAdmin) {
+ *     throw new ORPCError('FORBIDDEN')
+ *   }
+ *
+ *   return next()
+ * })
+ * ```
+ *
+ * @param name - Unique key for storing this meta entry.
+ * @param merge - Merges the existing value (or `undefined`) with the incoming value when applied multiple times.
+ *
+ * @returns A `[metaPlugin, getMeta]` tuple:
+ *   - `metaPlugin(metadata)` - Attaches metadata to a procedure under `name`.
+ *   - `getMeta(procedureOrLazy)` - Retrieves the metadata, or `undefined` if not set.
+ *
+ * @see {@link https://orpc.dev/docs/metadata | Metadata}
+ */
+declare function defineMeta<TName extends string, TData>(name: TName, merge: (incoming: TData, current: TData | undefined) => TData): [
+    metaPlugin: (meta: TData) => AnyMetaPlugin & {
+        name: TName;
+    },
+    getMeta: (procedureOrLazy: {
+        '~orpc': {
+            meta: Meta;
+        };
+    }) => TData | undefined
+];
+
+interface AsyncIteratorObjectSchemaDetails {
+    yieldSchema: AnySchema;
+    returnSchema?: AnySchema;
+}
+/**
+ * Defines a schema for an AsyncIteratorObject, validating each yielded value
+ * (and optionally the return value) with the given schemas.
+ *
+ * @see {@link https://orpc.dev/docs/async-iterator-object | AsyncIteratorObject (SSE)}
+ */
+declare function asyncIteratorObject<TYieldIn, TYieldOut, TReturnIn = unknown, TReturnOut = unknown>(yieldSchema: Schema<TYieldIn, TYieldOut>, returnSchema?: Schema<TReturnIn, TReturnOut>): Schema<AsyncIteratorObject<TYieldIn, TReturnIn, void>, AsyncIteratorClass<TYieldOut, TReturnOut, void>>;
+declare function getAsyncIteratorObjectSchemaDetails(schema: AnySchema | undefined): undefined | AsyncIteratorObjectSchemaDetails;
+
+type TypeRest<TInput, TOutput> = [map: (input: TInput) => Promisable<TOutput>] | (IsEqual<TInput, TOutput> extends true ? [] : never);
+/**
+ * Create a schema for things can be trust without validation.
+ * You can optionally pass a map function for mapping
+ *
+ * @example
+ * ```ts
+ * const normal = type<number>()
+ * const withMap = type<number, string>(input => input.toString())
+ *```
+ *
+ * @see {@link https://orpc.dev/docs/procedure#type-utility | Procedure - type Utility}
+ */
+declare function type<TInput, TOutput = TInput>(...[map]: TypeRest<TInput, TOutput>): Schema<TInput, TOutput>;
+/**
+ * Check if the given issue is following the standard-schema issue format.
+ */
+declare function isSchemaIssue(issue: unknown): issue is SchemaIssue;
+
+export { AnyProcedureContract as AnyContractProcedure, RouterContract as AnyContractRouter, AnyMetaPlugin, AnyProcedureContract, AnySchema, ContractBuilder, ErrorMap, ErrorMapItem, InferSchemaInput, InferSchemaOutput, MergedSchema, Meta, MetaPlugin, ORPCErrorFromErrorMap, ProcedureContract, RouterContract, Schema, SchemaIssue, asyncIteratorObject, augmentContractRouter, createContractClientFactory, createORPCErrorConstructorMap, defineMeta, error, asyncIteratorObject as eventIterator, getAsyncIteratorObjectSchemaDetails, getRouterContract as getContractRouter, getPathMeta, getProcedureContractOrThrow, getRouterContract, isSchemaIssue, mergeErrorMap, meta, minifyRouterContract as minifyContractRouter, minifyRouterContract, oc, reconcileORPCError, resolveBasePathMeta, resolveMetaPlugins, type };
+export type { AsyncIteratorObjectSchemaDetails, AugmentContractRouterOptions, AugmentedContractRouter, ContractClientFactory, ContractClientFactoryOptions, RouterContractClient as ContractRouterClient, InitialInputSchema, InitialOutputSchema, MergedErrorMap, ORPCErrorConstructorMap, ORPCErrorConstructorMapItem, ORPCErrorConstructorMapItemOptions, ORPCErrorFactory, ORPCErrorFactoryOptions, PathMetaPlugin, ProcedureContractBuilderWithInput, ProcedureContractBuilderWithInputOutput, ProcedureContractBuilderWithOutput, ProcedureContractClient, RouterContractClient, TypeRest };

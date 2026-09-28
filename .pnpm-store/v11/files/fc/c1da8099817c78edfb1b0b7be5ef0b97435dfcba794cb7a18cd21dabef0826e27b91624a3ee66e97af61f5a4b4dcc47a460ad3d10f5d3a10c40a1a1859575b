@@ -1,0 +1,23 @@
+import { Context, Router } from '@orpc/server';
+import { FastifyHandler, FastifyHandlerOptions } from '@orpc/server/fastify';
+import { StandardHandlerOptions } from '@orpc/server/standard';
+import { OpenAPIHandlerCodecOptions } from '../standard/index.mjs';
+import '@orpc/client';
+import '@orpc/shared';
+import '@standard-server/core';
+import '@orpc/contract';
+import '../../shared/openapi.Dl3gew1x.mjs';
+
+interface OpenAPIHandlerOptions<T extends Context> extends FastifyHandlerOptions<T>, StandardHandlerOptions<T>, OpenAPIHandlerCodecOptions<T> {
+}
+/**
+ * Serves oRPC procedures over the OpenAPI (RESTful) protocol as part of a Fastify server.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/fastify | Fastify Adapter}
+ */
+declare class OpenAPIHandler<T extends Context> extends FastifyHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<OpenAPIHandlerOptions<T>>);
+}
+
+export { OpenAPIHandler };
+export type { OpenAPIHandlerOptions };

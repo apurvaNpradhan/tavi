@@ -1,0 +1,21 @@
+import { NodeHttpHandler } from '@orpc/server/node';
+import { StandardHandler } from '@orpc/server/standard';
+import { O as OpenAPIHandlerCodec } from '../../shared/openapi.wQKxWEI2.mjs';
+import '@orpc/client';
+import '@orpc/server';
+import '@orpc/shared';
+import '@standard-server/core';
+import '../../shared/openapi.B1LWf28E.mjs';
+import '../../shared/openapi.B2G-HeFn.mjs';
+import '../../shared/openapi.B9PQzqBn.mjs';
+import 'rou3';
+
+class OpenAPIHandler extends NodeHttpHandler {
+  constructor(router, options = {}) {
+    const codec = new OpenAPIHandlerCodec(router, options);
+    const handler = new StandardHandler(codec, options);
+    super(handler, options);
+  }
+}
+
+export { OpenAPIHandler };

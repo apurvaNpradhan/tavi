@@ -1,0 +1,11 @@
+import { c as createProcedureClient } from '../shared/server.Djb_ebJT.mjs';
+import { D as DecoratedProcedure } from '../shared/server.24nXyhbl.mjs';
+import '@orpc/client';
+import '@orpc/contract';
+import '@orpc/shared';
+
+DecoratedProcedure.prototype.callable = function callable(...rest) {
+  const callable2 = createProcedureClient(this, ...rest);
+  callable2["~orpc"] = this["~orpc"];
+  return callable2;
+};

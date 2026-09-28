@@ -1,0 +1,45 @@
+import { ClientContext, ClientOptions, AnyORPCError } from '@orpc/client';
+import { StandardLinkCodec, StandardLinkCodecDecodedResponse } from '@orpc/client/standard';
+import { RouterContract } from '@orpc/contract';
+import { Value, Promisable, Public } from '@orpc/shared';
+import { StandardUrl, StandardHeaders, StandardLazyResponse, StandardRequest } from '@standard-server/core';
+import { O as OpenAPISerializer } from './openapi.Dl3gew1x.js';
+
+interface OpenAPILinkCodecOptions<T extends ClientContext> {
+    /**
+     * Base URL for all requests, without origin. Should match the OpenAPI handler mount path.
+     *
+     * @example '/api'
+     * @default '/'
+     */
+    url?: Value<Promisable<StandardUrl>, [options: ClientOptions<T>, path: string[], input: unknown]>;
+    /**
+     * Inject headers into the request.
+     */
+    headers?: Value<Promisable<StandardHeaders | Headers>, [options: ClientOptions<T>, path: string[], input: unknown]>;
+    /**
+     * Override the default OpenAPI serializer.
+     */
+    serializer?: Public<OpenAPISerializer>;
+    /**
+     * Customize how an error response body is converted into an ORPC error.
+     * Return `null` or `undefined` to fall back to the default decoding behavior.
+     */
+    customErrorResponseBodyDecoder?: (deserializedBody: unknown, response: StandardLazyResponse) => AnyORPCError | null | undefined;
+}
+declare class OpenAPILinkCodec<T extends ClientContext> implements StandardLinkCodec<T> {
+    private readonly router;
+    private readonly baseUrl;
+    private readonly headers;
+    private readonly serializer;
+    private readonly customErrorResponseBodyDecoder;
+    constructor(router: RouterContract, options?: OpenAPILinkCodecOptions<T>);
+    encodeInput(input: unknown, path: string[], options: ClientOptions<T>): Promise<StandardRequest>;
+    private encodePathParam;
+    private serializeQueryString;
+    decodeResponse(response: StandardLazyResponse, path: string[], _options: ClientOptions<T>): Promise<StandardLinkCodecDecodedResponse>;
+    private resolveProcedure;
+}
+
+export { OpenAPILinkCodec as a };
+export type { OpenAPILinkCodecOptions as O };

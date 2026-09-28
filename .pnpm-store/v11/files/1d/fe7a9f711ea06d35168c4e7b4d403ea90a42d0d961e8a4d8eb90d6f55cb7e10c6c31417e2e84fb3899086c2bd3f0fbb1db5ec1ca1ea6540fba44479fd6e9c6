@@ -1,0 +1,147 @@
+import { b as isDefinedError } from './shared/client.BYHnU_Z3.mjs';
+export { d as RPCJsonSerializer, R as RPCSerializer, e as cloneORPCError, a as createORPCErrorFromJson, c as createORPCErrorFromMalformedResponse, i as isORPCErrorJson, t as toORPCError, w as wrapAsyncIteratorPreservingEventMeta } from './shared/client.BYHnU_Z3.mjs';
+import { toArray, intercept, isTypescriptObject } from '@orpc/shared';
+export { AsyncIteratorClass, asyncIteratorToStream, asyncIteratorToUnproxiedDataStream, consumeAsyncIterator, consumeAsyncIterator as consumeEventIterator, asyncIteratorToStream as eventIteratorToStream, asyncIteratorToUnproxiedDataStream as eventIteratorToUnproxiedDataStream, onAsyncIteratorObjectError, onError, onFinish, onReadableStreamError, onStart, onSuccess, streamToAsyncIteratorObject, streamToAsyncIteratorObject as streamToEventIterator } from '@orpc/shared';
+export { C as COMMON_ERROR_STATUS_MAP, M as MalformedResponseError, O as ORPCError } from './shared/client.Dtv1JPkU.mjs';
+export { ErrorEvent, getEventMeta, unwrapEvent, withEventMeta } from '@standard-server/core';
+
+const RECURSIVE_CLIENT_UNWRAP_KEYS = /* @__PURE__ */ new Set([
+  /**
+   * Prevents the client from being treated as a thenable when users
+   * accidentally write `await client`.
+   */
+  "then",
+  /**
+   * Commonly used by libraries to bind functions to a specific `this`
+   * context.
+   */
+  "bind",
+  /**
+   * Commonly used by libraries to invoke functions with a specific `this`
+   * context.
+   */
+  "call",
+  /**
+   * Commonly used by libraries to invoke functions with a specific `this`
+   * context and an arguments array.
+   */
+  "apply",
+  /**
+   * Commonly accessed during primitive conversion, inspection, and logging.
+   */
+  "valueOf",
+  /**
+   * Commonly accessed during string conversion, inspection, and logging.
+   */
+  "toString",
+  /**
+   * Commonly accessed by serializers such as `JSON.stringify`.
+   */
+  "toJSON"
+]);
+
+function resolveFriendlyClientOptions(options) {
+  return {
+    ...options,
+    context: options.context ?? {}
+    // Context only optional if all fields are optional
+  };
+}
+function resolveClientRest(rest) {
+  return [
+    rest[0],
+    // rest[0] can be undefined if TInput is optional,
+    resolveFriendlyClientOptions(rest[1] ?? {})
+    // rest[1] can be undefined if all fields of FriendlyClientOptions are optional
+  ];
+}
+async function safe(promise) {
+  try {
+    const output = await promise;
+    return Object.assign(
+      [null, output, null, true],
+      { error: null, data: output, definedError: null, isSuccess: true }
+    );
+  } catch (e) {
+    const error = e;
+    if (isDefinedError(error)) {
+      return Object.assign(
+        [error, void 0, error, false],
+        { error, data: void 0, definedError: error, isSuccess: false }
+      );
+    }
+    return Object.assign(
+      [error, void 0, null, false],
+      { error, data: void 0, definedError: null, isSuccess: false }
+    );
+  }
+}
+
+function createORPCClient(link, { path = [], ...options } = {}) {
+  const procedureClient = (...rest) => {
+    const [input, callOptions] = resolveClientRest(rest);
+    const interceptors = [
+      ...toArray(options.interceptors),
+      ...toArray(options.scoped?.interceptors)
+    ];
+    return intercept(
+      interceptors,
+      { ...callOptions, input, path },
+      ({ path: path2, input: input2, ...callOptions2 }) => link.call(path2, input2, callOptions2)
+    );
+  };
+  const cache = /* @__PURE__ */ new Map();
+  const recursive = new Proxy(procedureClient, {
+    get(target, key) {
+      if (typeof key !== "string" || RECURSIVE_CLIENT_UNWRAP_KEYS.has(key)) {
+        return Reflect.get(target, key);
+      }
+      let client = cache.get(key);
+      if (client === void 0) {
+        client = createORPCClient(link, {
+          ...options,
+          path: [...path, key],
+          scoped: options.scoped?.[key]
+        });
+        cache.set(key, client);
+      }
+      return client;
+    }
+  });
+  return recursive;
+}
+
+function createSafeClient(client) {
+  const cache = /* @__PURE__ */ new Map();
+  const proxy = new Proxy((...args) => safe(client(...args)), {
+    get(target, prop) {
+      if (typeof prop !== "string" || RECURSIVE_CLIENT_UNWRAP_KEYS.has(prop)) {
+        return Reflect.get(target, prop);
+      }
+      let safeClient = cache.get(prop);
+      if (safeClient === void 0) {
+        const value = client[prop];
+        if (!isTypescriptObject(value)) {
+          return value;
+        }
+        safeClient = createSafeClient(value);
+        cache.set(prop, safeClient);
+      }
+      return safeClient;
+    }
+  });
+  return proxy;
+}
+
+class DynamicLink {
+  constructor(linkResolver) {
+    this.linkResolver = linkResolver;
+  }
+  async call(path, input, options) {
+    const resolvedLink = await this.linkResolver(options, path, input);
+    const output = await resolvedLink.call(path, input, options);
+    return output;
+  }
+}
+
+export { DynamicLink, RECURSIVE_CLIENT_UNWRAP_KEYS, createORPCClient, createSafeClient, isDefinedError, resolveClientRest, resolveFriendlyClientOptions, safe };

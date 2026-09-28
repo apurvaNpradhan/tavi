@@ -1,0 +1,48 @@
+import { ClientContext, ClientOptions } from '../../index.mjs';
+import { Value, Promisable } from '@orpc/shared';
+import { StandardRequest, StandardLazyResponse } from '@standard-server/core';
+import { ToFetchBodyOptions } from '@standard-server/fetch';
+import { StandardLinkTransport, StandardLink, StandardLinkOptions } from '../standard/index.mjs';
+import { RPCLinkCodecOptions } from '../standard/index.mjs';
+import '../../shared/client.n8K9dFhY.mjs';
+
+interface FetchLinkTransportOptions<T extends ClientContext> {
+    /**
+     * The origin to prepend to all request URLs, useful for CORS requests.
+     *
+     * @example 'https://api.example.com'
+     * @example 'http://localhost:3000'
+     */
+    origin?: Value<Promisable<`https://${string}` | `http://${string}` | ({} & string) | undefined>, [options: ClientOptions<T>, path: string[]]>;
+    /**
+     * Options for how to convert the Standard Request to a Fetch Request, like event stream options, etc.
+     */
+    toFetchRequest?: undefined | ToFetchBodyOptions;
+    /**
+     * Override the default fetch implementation.
+     *
+     * @default (url, init) => globalThis.fetch(url, init)
+     */
+    fetch?(url: string, init: RequestInit, options: ClientOptions<T>, path: string[]): Promise<Response>;
+}
+declare class FetchLinkTransport<T extends ClientContext> implements StandardLinkTransport<T> {
+    private readonly origin;
+    private readonly fetch;
+    private readonly toFetchRequestOptions;
+    constructor(options: FetchLinkTransportOptions<T>);
+    send(standardRequest: StandardRequest, path: string[], options: ClientOptions<T>): Promise<StandardLazyResponse>;
+}
+
+interface RPCLinkOptions<T extends ClientContext> extends StandardLinkOptions<T>, FetchLinkTransportOptions<T>, RPCLinkCodecOptions<T> {
+}
+/**
+ * Client link that communicates with an RPC Handler over the Fetch API (HTTP).
+ *
+ * @see {@link https://orpc.dev/docs/adapters/fetch-api | Fetch API Adapter}
+ */
+declare class RPCLink<T extends ClientContext> extends StandardLink<T> {
+    constructor(options: RPCLinkOptions<T>);
+}
+
+export { FetchLinkTransport, RPCLink };
+export type { FetchLinkTransportOptions, RPCLinkOptions };

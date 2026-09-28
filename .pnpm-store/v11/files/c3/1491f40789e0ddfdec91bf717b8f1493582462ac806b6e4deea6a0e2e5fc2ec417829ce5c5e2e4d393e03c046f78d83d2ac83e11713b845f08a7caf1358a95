@@ -1,0 +1,69 @@
+import { clearHighlights, highlightAllIssues } from "../utils/ui.utils.js";
+import { filterIssuesAboveThreshold, runAudit } from "../utils/ally-audit.utils.js";
+import { mergeConfig, saveConfig } from "../utils/config.utils.js";
+import { createComponent } from "solid-js/web";
+import { createTheme } from "@tanstack/devtools-ui";
+import { createContext, createEffect, createMemo, createSignal, useContext } from "solid-js";
+import { createStore } from "solid-js/store";
+//#region src/core/contexts/allyContext.tsx
+/** @jsxImportSource solid-js */
+function createAllyValue() {
+	const { theme } = createTheme();
+	const [config, setConfig] = createStore(mergeConfig());
+	const [allyResult, setAllyResult] = createStore({ state: "init" });
+	const [impactKey, setImpactKey] = createSignal("all");
+	const triggerAllyScan = async () => {
+		setAllyResult("state", "scanning");
+		setAllyResult({
+			audit: await runAudit(config),
+			state: "done"
+		});
+	};
+	const filteredIssues = createMemo(() => {
+		if (allyResult.state !== "done" || !allyResult.audit?.issues) return [];
+		let results = allyResult.audit.issues;
+		results = filterIssuesAboveThreshold(results, config.threshold);
+		if (config.disabledRules.length > 0) results = results.filter((issue) => !config.disabledRules.includes(issue.ruleId));
+		if (impactKey() === "all") return results;
+		return results.filter((val) => val.impact === impactKey());
+	});
+	createEffect(() => {
+		if (config.showOverlays === false) {
+			clearHighlights();
+			return;
+		}
+		if (allyResult.state === "done") highlightAllIssues(filteredIssues(), theme());
+	});
+	createEffect(() => {
+		saveConfig(config);
+	});
+	return {
+		impactKey,
+		setImpactKey,
+		filteredIssues,
+		triggerAllyScan,
+		setConfig,
+		config,
+		allyResult,
+		theme
+	};
+}
+var AllyContext = createContext(null);
+var AllyProvider = (props) => {
+	const value = createAllyValue();
+	return createComponent(AllyContext.Provider, {
+		value,
+		get children() {
+			return props.children;
+		}
+	});
+};
+function createAllyContext() {
+	const context = useContext(AllyContext);
+	if (context === null) throw new Error("createAllyContext must be used within an AllyProvider");
+	return context;
+}
+//#endregion
+export { AllyProvider, createAllyContext };
+
+//# sourceMappingURL=allyContext.js.map

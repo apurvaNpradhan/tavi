@@ -1,0 +1,203 @@
+import { ThrowableError } from '@orpc/shared';
+import { ORPCErrorCode, ORPCError } from '@orpc/client';
+import { StandardSchemaV1 } from '@standard-schema/spec';
+
+/**
+ * TOutput default = TInput for better readability (shorter) in-case both TInput, TOutput is equal
+ */
+type Schema<TInput, TOutput = TInput> = StandardSchemaV1<TInput, TOutput>;
+/**
+ * Any Standard Schema compatible schema, regardless of its input and output types.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/standard-schema | Standard Schema Integration}
+ */
+type AnySchema = Schema<any>;
+type SchemaIssue = StandardSchemaV1.Issue;
+/**
+ * Infers the input type of a schema.
+ *
+ * @see {@link https://orpc.dev/docs/metadata | Metadata}
+ */
+type InferSchemaInput<T extends AnySchema> = T extends StandardSchemaV1<infer UInput, any> ? UInput : never;
+/**
+ * Infers the output type of a schema.
+ *
+ * @see {@link https://orpc.dev/docs/metadata | Metadata}
+ */
+type InferSchemaOutput<T extends AnySchema> = T extends StandardSchemaV1<any, infer UOutput> ? UOutput : never;
+type MergedSchema<T extends AnySchema, U extends AnySchema> = T extends Schema<infer TInput, infer TOutput> ? U extends Schema<infer UInput, infer UOutput> ? Schema<TInput & UInput, TOutput & UOutput> : never : never;
+
+interface ErrorMapItem {
+    /**
+     * Default message, can be overridden when constructing an error.
+     */
+    message?: undefined | string;
+    /**
+     * Schema used to type and validate the error data.
+     */
+    data?: undefined | AnySchema;
+}
+/**
+ * Map of error codes to their definitions, as passed to `.errors(...)`.
+ * Errors defined here remain properly typed on the client.
+ *
+ * @see {@link https://orpc.dev/docs/metadata | Metadata}
+ */
+type ErrorMap = {
+    [key in ORPCErrorCode]?: ErrorMapItem;
+};
+type ORPCErrorFromErrorMap<TErrorMap extends ErrorMap> = {
+    [K in keyof TErrorMap]: TErrorMap[K] extends ErrorMapItem ? ORPCError<K & ORPCErrorCode, TErrorMap[K]['data'] extends AnySchema ? InferSchemaOutput<TErrorMap[K]['data']> : unknown> : never;
+}[keyof TErrorMap];
+interface ValidationErrorOptions extends ErrorOptions {
+    message: string;
+    issues: readonly SchemaIssue[];
+    invalidData: unknown;
+}
+/**
+ * Error thrown when input, output, or error data fails schema validation,
+ * carrying the standard-schema `issues` and the invalid data.
+ * Usually found as the `cause` of an `ORPCError`.
+ *
+ * @see {@link https://orpc.dev/docs/recipes/validation-customization | Validation Customization}
+ */
+declare class ValidationError extends Error {
+    name: string;
+    /**
+     * This array is readonly because the upstream Standard Schema returns readonly issues.
+     */
+    issues: readonly SchemaIssue[];
+    invalidData: unknown;
+    constructor(options: ValidationErrorOptions);
+}
+
+/**
+ * Arbitrary metadata attached to a procedure.
+ * Middleware, plugins, and tooling can read it later to control behavior.
+ *
+ * @see {@link https://orpc.dev/docs/metadata | Metadata}
+ */
+interface Meta {
+    [key: PropertyKey]: unknown;
+}
+interface MetaPluginDefinition<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    __TInputSchema?: {
+        type: TInputSchema;
+    };
+    __TOutputSchema?: {
+        type: TOutputSchema;
+    };
+    __TErrorMap?: {
+        type: TErrorMap;
+    };
+}
+/**
+ * A metadata plugin passed to `.meta(...)`.
+ * Defines how metadata is initialized and merged, and can infer or restrict procedure types.
+ *
+ * @see {@link https://orpc.dev/docs/metadata | Metadata}
+ */
+interface MetaPlugin<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    /** This only for types, so it should be optional */
+    '~orpc'?: MetaPluginDefinition<TInputSchema, TOutputSchema, TErrorMap> | undefined;
+    /** Unique name of the plugin, used for identification. */
+    'name': string;
+    /**
+     * Runs once when this plugin is first added to the builder.
+     * Use this to set up initial metadata values.
+     */
+    'init'?: (meta: Meta) => Meta;
+    /**
+     * Runs every time metadata is updated.
+     * This is called for all plugins in the chain whenever a new plugin is added.
+     */
+    'apply'?: (meta: Meta) => Meta;
+}
+/**
+ * A `MetaPlugin` with all type parameters relaxed to `any`.
+ *
+ * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+ * @see {@link https://orpc.dev/docs/procedure | Procedure}
+ */
+type AnyMetaPlugin = MetaPlugin<any, any, any>;
+declare const HIDDEN_META_PLUGINS_SYMBOL: unique symbol;
+declare function getHiddenMetaPlugins(container: unknown): AnyMetaPlugin[] | undefined;
+declare function setHiddenMetaPlugins<T extends object>(container: T, metaPlugins: AnyMetaPlugin[]): void;
+
+interface ProcedureContractDefinition<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    __TInputSchema?: {
+        type: TInputSchema;
+    };
+    __TOutputSchema?: {
+        type: TOutputSchema;
+    };
+    /**
+     * Non-serializable should be optional
+     */
+    inputSchemas?: AnySchema[] | undefined;
+    outputSchemas?: AnySchema[] | undefined;
+    metaPlugins?: AnyMetaPlugin[] | undefined;
+    errorMap: TErrorMap;
+    meta: Meta;
+}
+declare class ProcedureContract<TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+    '~orpc': ProcedureContractDefinition<TInputSchema, TOutputSchema, TErrorMap>;
+    constructor(def: ProcedureContractDefinition<TInputSchema, TOutputSchema, TErrorMap>);
+    /**
+     * Checks if the given instance satisfies the {@link ProcedureContract} class/interface.
+     */
+    static [Symbol.hasInstance](instance: unknown): boolean;
+}
+type AnyProcedureContract = ProcedureContract<any, any, any>;
+
+/**
+ * A router contract: a single procedure contract or a nested record of them.
+ *
+ * @see {@link https://orpc.dev/docs/contract/client-factory | Contract Client Factory}
+ */
+type RouterContract = AnyProcedureContract | {
+    [k: string]: RouterContract;
+};
+/**
+ * Infer the input types for each procedure-contract, preserving the router-contract shape.
+ *
+ * @see {@link https://orpc.dev/docs/contract/router#infer-router-contract-inputs | Router Contract - Infer Router Contract Inputs}
+ */
+type InferRouterContractInputs<T extends RouterContract> = T extends ProcedureContract<infer UInputSchema, any, any> ? InferSchemaInput<UInputSchema> : {
+    [K in keyof T]: T[K] extends RouterContract ? InferRouterContractInputs<T[K]> : never;
+};
+/**
+ * Infer the output types for each procedure-contract, preserving the router-contract shape.
+ *
+ * @see {@link https://orpc.dev/docs/contract/router#infer-router-contract-outputs | Router Contract - Infer Router Contract Outputs}
+ */
+type InferRouterContractOutputs<T extends RouterContract> = T extends ProcedureContract<any, infer UOutputSchema, any> ? InferSchemaOutput<UOutputSchema> : {
+    [K in keyof T]: T[K] extends RouterContract ? InferRouterContractOutputs<T[K]> : never;
+};
+/**
+ * Infer the union of error maps defined across the entire router-contract.
+ *
+ * @see {@link https://orpc.dev/docs/contract/router#infer-router-contract-error-map | Router Contract - Infer Router Contract Error Map}
+ */
+type InferRouterContractErrorMap<T extends RouterContract> = T extends ProcedureContract<any, any, infer UErrorMap> ? UErrorMap : {
+    [K in keyof T]: T[K] extends RouterContract ? InferRouterContractErrorMap<T[K]> : never;
+}[keyof T];
+/**
+ * Infer the union of throwable errors for entire router-contract.
+ *
+ * @see {@link https://orpc.dev/docs/contract/router#infer-router-contract-error | Router Contract - Infer Router Contract Error}
+ */
+type InferRouterContractError<T extends RouterContract> = T extends ProcedureContract<any, any, infer UErrorMap> ? ORPCErrorFromErrorMap<UErrorMap> | ThrowableError : {
+    [K in keyof T]: T[K] extends RouterContract ? InferRouterContractError<T[K]> : never;
+}[keyof T];
+/**
+ * Infer throwable errors for each procedure-contract, preserving the router-contract shape.
+ *
+ * @see {@link https://orpc.dev/docs/contract/router#infer-router-contract-errors | Router Contract - Infer Router Contract Errors}
+ */
+type InferRouterContractErrors<T extends RouterContract> = T extends ProcedureContract<any, any, infer UErrorMap> ? ORPCErrorFromErrorMap<UErrorMap> | ThrowableError : {
+    [K in keyof T]: T[K] extends RouterContract ? InferRouterContractErrors<T[K]> : never;
+};
+
+export { HIDDEN_META_PLUGINS_SYMBOL as H, ProcedureContract as P, ValidationError as V, getHiddenMetaPlugins as p, setHiddenMetaPlugins as s };
+export type { AnySchema as A, ErrorMap as E, InferSchemaInput as I, MetaPlugin as M, ORPCErrorFromErrorMap as O, RouterContract as R, Schema as S, MergedSchema as a, Meta as b, AnyMetaPlugin as c, AnyProcedureContract as d, InferSchemaOutput as e, ErrorMapItem as f, SchemaIssue as g, InferRouterContractErrorMap as h, InferRouterContractInputs as i, InferRouterContractOutputs as j, InferRouterContractError as k, InferRouterContractErrors as l, MetaPluginDefinition as m, ProcedureContractDefinition as n, ValidationErrorOptions as o };

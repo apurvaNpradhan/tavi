@@ -1,0 +1,168 @@
+import { StandardBodyHint, StandardBody, StandardHeaders, StandardLazyRequest, StandardResponse, StandardUrl } from '@standard-server/core';
+import { Writable } from 'node:stream';
+import { ToNodeHttpBodyOptions } from '@standard-server/node';
+
+/**
+ * AWS API Gateway proxy event, payload format 1.0.
+ *
+ * A structural subset of the same-named type from `@types/aws-lambda`.
+ */
+interface APIGatewayProxyEvent {
+    /**
+     * @example 'GET', 'POST', etc.
+     */
+    httpMethod: string;
+    /**
+     * Url-decoded when delivered by an HTTP API, still encoded from a REST API.
+     *
+     * @example '/example'
+     */
+    path: string;
+    /**
+     * Keys can be any case.
+     */
+    headers?: Record<string, string | undefined> | null;
+    /**
+     * Preferred over `headers`, it can carry duplicated headers.
+     */
+    multiValueHeaders?: Record<string, string[] | undefined> | null;
+    /**
+     * Values are already url-decoded.
+     */
+    queryStringParameters?: Record<string, string | undefined> | null;
+    /**
+     * Preferred over `queryStringParameters`, it can carry duplicated parameters.
+     */
+    multiValueQueryStringParameters?: Record<string, string[] | undefined> | null;
+    /**
+     * Base64-encoded when `isBase64Encoded` is `true`.
+     */
+    body?: string | null;
+    isBase64Encoded?: boolean;
+}
+/**
+ * AWS API Gateway proxy event, payload format 2.0, also used by Lambda Function URLs.
+ *
+ * A structural subset of the same-named type from `@types/aws-lambda`.
+ */
+interface APIGatewayProxyEventV2 {
+    /**
+     * Url-decoded when delivered by an HTTP API, still encoded from a Lambda Function URL.
+     *
+     * @example '/example'
+     */
+    rawPath: string;
+    /**
+     * Already url-encoded, without the leading `?`.
+     */
+    rawQueryString?: string;
+    /**
+     * Keys can be any case, duplicated headers arrive joined with commas.
+     */
+    headers?: Record<string, string | undefined> | null;
+    /**
+     * Extracted from the `cookie` header.
+     */
+    cookies?: string[] | null;
+    requestContext: {
+        http: {
+            /**
+             * @example 'GET', 'POST', etc.
+             */
+            method: string;
+        };
+    };
+    /**
+     * Base64-encoded when `isBase64Encoded` is `true`.
+     */
+    body?: string | null;
+    isBase64Encoded?: boolean;
+}
+/**
+ * Any supported API Gateway proxy event.
+ * Payload format 1.0 is detected by its top-level `httpMethod` field.
+ */
+type AnyAPIGatewayProxyEvent = APIGatewayProxyEvent | APIGatewayProxyEventV2;
+/**
+ * The stream `awslambda.streamifyResponse` provides to write the response to.
+ */
+interface HttpResponseStream extends Writable {
+    setContentType: (contentType: string) => void;
+}
+/**
+ * Shape of the `awslambda` global the Lambda Node.js runtime injects
+ * when response streaming is enabled.
+ *
+ * Not declared globally to keep the consumer's global types clean,
+ * declare it yourself: `declare const awslambda: AwsLambdaGlobal`
+ */
+interface AwsLambdaGlobal {
+    streamifyResponse<TEvent = unknown, TContext = unknown>(handler: (event: TEvent, responseStream: HttpResponseStream, context: TContext) => Promise<void> | void): (event: TEvent, responseStream: HttpResponseStream, context: TContext) => Promise<void> | void;
+    HttpResponseStream: {
+        /**
+         * Sends the metadata prelude and returns the stream to write the body to.
+         */
+        from(responseStream: HttpResponseStream, metadata: {
+            statusCode: number;
+            headers: Record<string, string>;
+            cookies: string[];
+        } & Record<string, unknown>): HttpResponseStream;
+    };
+}
+
+interface ToStandardBodyOptions {
+    /**
+     * Hints on how the body should be parsed.
+     */
+    hint?: StandardBodyHint | undefined;
+}
+/**
+ * Parses the fully buffered, optionally base64-encoded body of an API Gateway proxy event.
+ */
+declare function toStandardBody(event: AnyAPIGatewayProxyEvent, options?: ToStandardBodyOptions): Promise<StandardBody>;
+
+/**
+ * Convert API Gateway proxy event headers to standard headers.
+ *
+ * Payload format 1.0 merges `multiValueHeaders` and `headers`, preferring
+ * `multiValueHeaders` per key. Payload format 2.0 restores the `cookie`
+ * header from `cookies`.
+ */
+declare function toStandardHeaders(event: AnyAPIGatewayProxyEvent): StandardHeaders;
+/**
+ * Read a single header from an API Gateway proxy event, case-insensitively.
+ */
+declare function getEventHeader(event: AnyAPIGatewayProxyEvent, key: string): string | string[] | undefined;
+/**
+ * Split standard headers into the `headers` and `cookies` metadata fields.
+ * `set-cookie` values are kept separate because joining them would corrupt them.
+ */
+declare function toLambdaHeaders(standardHeaders: StandardHeaders): [
+    headers: Record<string, string>,
+    setCookies: string[]
+];
+
+/**
+ * Convert an API Gateway proxy event to a standard lazy request.
+ */
+declare function toStandardLazyRequest(event: AnyAPIGatewayProxyEvent, responseStream: HttpResponseStream): StandardLazyRequest;
+
+interface SendStandardResponseOptions extends ToNodeHttpBodyOptions {
+}
+/**
+ * Send a standard response through the stream `awslambda.streamifyResponse` provides.
+ *
+ * Requires the Lambda Node.js runtime with response streaming enabled.
+ */
+declare function sendStandardResponse(responseStream: HttpResponseStream, standardResponse: StandardResponse, options?: SendStandardResponseOptions): Promise<void>;
+
+/**
+ * Build a standard url from an API Gateway proxy event.
+ *
+ * Payload format 1.0 query parameters are re-encoded (delivered url-decoded),
+ * payload format 2.0's `rawQueryString` is used as-is.
+ */
+declare function toStandardUrl(event: AnyAPIGatewayProxyEvent): StandardUrl;
+
+export { getEventHeader, sendStandardResponse, toLambdaHeaders, toStandardBody, toStandardHeaders, toStandardLazyRequest, toStandardUrl };
+export type { APIGatewayProxyEvent, APIGatewayProxyEventV2, AnyAPIGatewayProxyEvent, AwsLambdaGlobal, HttpResponseStream, SendStandardResponseOptions, ToStandardBodyOptions };

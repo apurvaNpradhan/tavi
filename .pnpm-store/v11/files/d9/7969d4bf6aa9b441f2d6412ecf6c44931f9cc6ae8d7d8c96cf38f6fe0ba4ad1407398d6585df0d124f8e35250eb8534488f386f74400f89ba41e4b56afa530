@@ -1,0 +1,9 @@
+function resolveFriendlyStandardHandlerHandleOptions(options) {
+  return {
+    ...options,
+    context: options.context ?? {}
+    // Context only optional if all fields are optional
+  };
+}
+
+export { resolveFriendlyStandardHandlerHandleOptions as r };

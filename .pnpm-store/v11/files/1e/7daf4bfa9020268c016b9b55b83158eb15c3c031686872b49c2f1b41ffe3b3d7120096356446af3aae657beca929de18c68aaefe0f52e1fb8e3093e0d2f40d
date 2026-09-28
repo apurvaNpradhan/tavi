@@ -1,0 +1,47 @@
+export { R as BodyLimitPlugin } from '../../shared/server.D0dr-F8u.js';
+import { MaybeOptionalOptions } from '@orpc/shared';
+import { ToFetchResponseOptions } from '@standard-server/fetch';
+import { Context } from '../../index.js';
+import { StandardHandler, StandardHandlerOptions } from '../standard/index.js';
+import { FriendlyStandardHandlerHandleOptions } from '../standard/index.js';
+import { Router } from '../../index.js';
+import { RPCHandlerCodecOptions } from '../standard/index.js';
+import '@orpc/client';
+import '@orpc/contract';
+import '@standard-server/core';
+
+type FetchHandlerHandleResult = {
+    matched: true;
+    response: Response;
+} | {
+    matched: false;
+    response?: undefined;
+};
+interface FetchHandlerOptions<_T extends Context> {
+    /**
+     * Options for how to convert the Fetch Response to a Standard Response, like event stream options, etc.
+     */
+    toFetchResponse?: undefined | ToFetchResponseOptions;
+}
+declare class FetchHandler<T extends Context> {
+    private readonly standardHandler;
+    private readonly toFetchResponseOptions;
+    constructor(standardHandler: StandardHandler<T>, options?: NoInfer<FetchHandlerOptions<T>>);
+    handle(request: Request, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): Promise<FetchHandlerHandleResult>;
+}
+
+interface RPCHandlerOptions<T extends Context> extends FetchHandlerOptions<T>, StandardHandlerOptions<T>, RPCHandlerCodecOptions<T> {
+}
+/**
+ * Serves an oRPC router over the RPC protocol using the Fetch API
+ * (Request/Response), supported by modern runtimes like Deno, Bun,
+ * Cloudflare Workers, and browsers.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/fetch-api | Fetch API Adapter}
+ */
+declare class RPCHandler<T extends Context> extends FetchHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<RPCHandlerOptions<T>>);
+}
+
+export { FetchHandler, RPCHandler };
+export type { FetchHandlerHandleResult, FetchHandlerOptions, RPCHandlerOptions };

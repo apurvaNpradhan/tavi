@@ -1,0 +1,10 @@
+import { r as resolveFriendlyStandardHandlerHandleOptions } from '../../shared/server.W91HSRkE.mjs';
+
+function createStandardPeerRequestHandler(handler, options) {
+  return async (request) => {
+    const { response } = await handler.handle(request, resolveFriendlyStandardHandlerHandleOptions(options));
+    return response ?? { status: 404, headers: {}, body: "No procedure matched" };
+  };
+}
+
+export { createStandardPeerRequestHandler };

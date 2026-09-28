@@ -1,0 +1,50 @@
+import { useEffect, useRef } from "preact/hooks";
+import { Fragment, jsx } from "preact/jsx-runtime";
+//#region src/preact/panel.tsx
+/** @jsxImportSource preact */
+/**
+* Creates a Preact component that dynamically imports and mounts a devtools panel. SSR friendly.
+* @param devtoolsPackageName The name of the devtools package to be imported, e.g., '@tanstack/devtools-preact'
+* @param importName The name of the export to be imported from the devtools package (e.g., 'default' or 'DevtoolsCore')
+* @returns A Preact component that mounts the devtools
+* @example
+* ```tsx
+* // if the export is default
+* const [PreactDevtoolsPanel, NoOpPreactDevtoolsPanel] = createPreactPanel('@tanstack/devtools-preact')
+* ```
+*
+* @example
+* ```tsx
+* // if the export is named differently
+* const [PreactDevtoolsPanel, NoOpPreactDevtoolsPanel] = createPreactPanel('@tanstack/devtools-preact', 'DevtoolsCore')
+* ```
+*/
+function createPreactPanel(CoreClass) {
+	function Panel(props) {
+		const devToolRef = useRef(null);
+		const devtools = useRef(null);
+		useEffect(() => {
+			if (devtools.current) return;
+			devtools.current = new CoreClass();
+			if (devToolRef.current) devtools.current.mount(devToolRef.current, props);
+			return () => {
+				if (devToolRef.current) {
+					devtools.current?.unmount();
+					devtools.current = null;
+				}
+			};
+		}, [props]);
+		return /* @__PURE__ */ jsx("div", {
+			style: { height: "100%" },
+			ref: devToolRef
+		});
+	}
+	function NoOpPanel(_props) {
+		return /* @__PURE__ */ jsx(Fragment, {});
+	}
+	return [Panel, NoOpPanel];
+}
+//#endregion
+export { createPreactPanel };
+
+//# sourceMappingURL=panel.js.map

@@ -1,0 +1,426 @@
+import { meetsThreshold } from "./ally-audit.utils.js";
+//#region src/core/utils/custom-audit.utils.ts
+/**
+* Custom accessibility rules for issues not covered by axe-core
+*
+* These rules detect common accessibility anti-patterns like:
+* - Click handlers on non-interactive elements
+* - Mouse-only event handlers without keyboard equivalents
+* - Static elements with interactive handlers
+*/
+/**
+* Interactive HTML elements that can receive focus and have implicit roles
+*/
+var INTERACTIVE_ELEMENTS = new Set([
+	"a",
+	"button",
+	"input",
+	"select",
+	"textarea",
+	"details",
+	"summary",
+	"audio",
+	"video"
+]);
+/**
+* Elements that are interactive when they have an href attribute
+*/
+var INTERACTIVE_WITH_HREF = new Set(["a", "area"]);
+/**
+* Interactive ARIA roles
+*/
+var INTERACTIVE_ROLES = new Set([
+	"button",
+	"checkbox",
+	"combobox",
+	"gridcell",
+	"link",
+	"listbox",
+	"menu",
+	"menubar",
+	"menuitem",
+	"menuitemcheckbox",
+	"menuitemradio",
+	"option",
+	"progressbar",
+	"radio",
+	"scrollbar",
+	"searchbox",
+	"slider",
+	"spinbutton",
+	"switch",
+	"tab",
+	"tabpanel",
+	"textbox",
+	"tree",
+	"treeitem"
+]);
+/**
+* Mouse-only events that should have keyboard equivalents
+*/
+var MOUSE_ONLY_EVENTS = [
+	"onclick",
+	"ondblclick",
+	"onmousedown",
+	"onmouseup",
+	"onmouseover",
+	"onmouseout",
+	"onmouseenter",
+	"onmouseleave"
+];
+/**
+* Keyboard events that would make an element accessible
+*/
+var KEYBOARD_EVENTS = [
+	"onkeydown",
+	"onkeyup",
+	"onkeypress"
+];
+/**
+* Selectors for devtools elements to exclude
+*/
+var DEVTOOLS_SELECTORS = [
+	"[data-testid=\"tanstack_devtools\"]",
+	"[data-devtools]",
+	"[data-devtools-panel]",
+	"[data-a11y-overlay]"
+];
+/**
+* Common root container element IDs used by frameworks.
+* React attaches event delegation to these elements, which would
+* cause false positives for click handler detection.
+*/
+var ROOT_CONTAINER_IDS = new Set([
+	"root",
+	"app",
+	"__next",
+	"__nuxt",
+	"__gatsby",
+	"app-root",
+	"svelte",
+	"q-app"
+]);
+/**
+* Check if an element is a root container (framework app mount point).
+* These elements often have React internals attached for event delegation
+* but don't actually have user-defined click handlers.
+*/
+function isRootContainer(element) {
+	if (element.id && ROOT_CONTAINER_IDS.has(element.id)) return true;
+	if (element.parentElement === document.body) {
+		const tagName = element.tagName.toLowerCase();
+		if (tagName === "div" || tagName === "main" || tagName === "section") {
+			const keys = Object.keys(element);
+			for (const key of keys) if (key.startsWith("__reactProps$")) {
+				const props = element[key];
+				if (props && typeof props === "object") {
+					const propsObj = props;
+					if ("children" in propsObj && !("onClick" in propsObj)) return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+/**
+* Check if an element is inside devtools
+*/
+function isInsideDevtools(element) {
+	for (const selector of DEVTOOLS_SELECTORS) if (element.closest(selector)) return true;
+	return false;
+}
+/**
+* Check if element is interactive by nature
+*/
+function isInteractiveElement(element) {
+	const tagName = element.tagName.toLowerCase();
+	if (INTERACTIVE_ELEMENTS.has(tagName)) return !element.hasAttribute("disabled");
+	return INTERACTIVE_WITH_HREF.has(tagName) && element.hasAttribute("href");
+}
+/**
+* Check if element has an interactive ARIA role
+*/
+function hasInteractiveRole(element) {
+	const role = element.getAttribute("role");
+	return role !== null && INTERACTIVE_ROLES.has(role);
+}
+/**
+* Check if element is focusable (has tabindex)
+*/
+function isFocusable(element) {
+	const tabindex = element.getAttribute("tabindex");
+	if (tabindex === null) return false;
+	const tabindexValue = parseInt(tabindex, 10);
+	return !isNaN(tabindexValue) && tabindexValue >= 0;
+}
+/**
+* Check if element has click event handlers (via attribute or property)
+*/
+function hasClickHandler(element) {
+	if (element.hasAttribute("onclick")) return true;
+	if (typeof element.onclick === "function") return true;
+	const keys = Object.keys(element);
+	for (const key of keys) if (key.startsWith("__reactProps$") || key.startsWith("__reactFiber$") || key.startsWith("__reactEventHandlers$")) {
+		const props = element[key];
+		if (props && typeof props === "object") {
+			const propsObj = props;
+			if (typeof propsObj.onClick === "function" || typeof propsObj.onMouseDown === "function" || typeof propsObj.onMouseUp === "function") return true;
+		}
+	}
+	return false;
+}
+/**
+* Check if element has keyboard event handlers
+*/
+function hasKeyboardHandler(element) {
+	for (const event of KEYBOARD_EVENTS) if (element.hasAttribute(event)) return true;
+	const htmlElement = element;
+	if (typeof htmlElement.onkeydown === "function" || typeof htmlElement.onkeyup === "function" || typeof htmlElement.onkeypress === "function") return true;
+	const keys = Object.keys(element);
+	for (const key of keys) if (key.startsWith("__reactProps$")) {
+		const props = element[key];
+		if (props && typeof props === "object") {
+			const propsObj = props;
+			if (typeof propsObj.onKeyDown === "function" || typeof propsObj.onKeyUp === "function" || typeof propsObj.onKeyPress === "function") return true;
+		}
+	}
+	return false;
+}
+/**
+* Class prefixes to exclude from selectors (devtools overlay classes)
+*/
+var EXCLUDED_CLASS_PREFIXES = ["tsd-a11y-"];
+/**
+* Filter out devtools-injected classes from class list
+*/
+function filterClasses(classList) {
+	return Array.from(classList).filter((cls) => !EXCLUDED_CLASS_PREFIXES.some((prefix) => cls.startsWith(prefix)));
+}
+/**
+* Get a unique selector for an element
+*/
+function getSelector(element) {
+	if (element.id) return `#${element.id}`;
+	const tagName = element.tagName.toLowerCase();
+	const classes = filterClasses(element.classList).join(".");
+	const classSelector = classes ? `.${classes}` : "";
+	const parent = element.parentElement;
+	if (parent && parent !== document.body) {
+		const parentSelector = getSelector(parent);
+		const siblings = Array.from(parent.children).filter((el) => el.tagName === element.tagName);
+		if (siblings.length > 1) return `${parentSelector} > ${tagName}${classSelector}:nth-of-type(${siblings.indexOf(element) + 1})`;
+		return `${parentSelector} > ${tagName}${classSelector}`;
+	}
+	return `${tagName}${classSelector}`;
+}
+/**
+* Custom rule: Click handler on non-interactive element
+*
+* This rule detects elements that have click handlers but are not:
+* - Interactive HTML elements (button, a, input, etc.)
+* - Elements with interactive ARIA roles
+* - Elements with tabindex for keyboard access
+*/
+function checkClickHandlerOnNonInteractive(context = document, threshold = "serious") {
+	const issues = [];
+	const timestamp = Date.now();
+	const allElements = context.querySelectorAll("*");
+	for (const element of allElements) {
+		if (isInsideDevtools(element)) continue;
+		if (isRootContainer(element)) continue;
+		if (isInteractiveElement(element) || hasInteractiveRole(element)) continue;
+		if (!hasClickHandler(element)) continue;
+		const hasFocus = isFocusable(element);
+		const hasKeyboard = hasKeyboardHandler(element);
+		if (!hasFocus && !hasKeyboard) {
+			const selector = getSelector(element);
+			issues.push({
+				id: `click-handler-no-keyboard-${timestamp}-${issues.length}`,
+				ruleId: "click-handler-on-non-interactive",
+				impact: "serious",
+				message: "Element has a click handler but is not keyboard accessible. Add tabindex=\"0\" and keyboard event handlers, or use an interactive element like <button>.",
+				help: "Interactive elements must be keyboard accessible",
+				helpUrl: "https://www.w3.org/WAI/WCAG21/Understanding/keyboard-accessible",
+				wcagTags: ["wcag211", "wcag21a"],
+				nodes: [{
+					selector,
+					html: element.outerHTML.slice(0, 200)
+				}],
+				meetsThreshold: meetsThreshold("serious", threshold),
+				timestamp
+			});
+		} else if (hasFocus && !hasKeyboard) {
+			const selector = getSelector(element);
+			issues.push({
+				id: `click-handler-no-keyboard-handler-${timestamp}-${issues.length}`,
+				ruleId: "click-handler-on-non-interactive",
+				impact: "moderate",
+				message: "Element has a click handler and tabindex but no keyboard event handler. Add onKeyDown/onKeyPress to handle Enter/Space keys.",
+				help: "Interactive elements should respond to keyboard events",
+				helpUrl: "https://www.w3.org/WAI/WCAG21/Understanding/keyboard-accessible",
+				wcagTags: ["wcag211", "wcag21a"],
+				nodes: [{
+					selector,
+					html: element.outerHTML.slice(0, 200)
+				}],
+				meetsThreshold: meetsThreshold("moderate", threshold),
+				timestamp
+			});
+		}
+	}
+	return issues;
+}
+/**
+* Custom rule: Mouse-only event handlers
+*
+* Detects elements that have mouse event handlers (onmouseover, onmousedown, etc.)
+* without corresponding keyboard event handlers.
+*/
+function checkMouseOnlyEvents(context = document, threshold = "serious") {
+	const issues = [];
+	const timestamp = Date.now();
+	const mouseEventSelectors = MOUSE_ONLY_EVENTS.map((event) => `[${event}]`).join(", ");
+	const elements = context.querySelectorAll(mouseEventSelectors);
+	for (const element of elements) {
+		if (isInsideDevtools(element)) continue;
+		if (isInteractiveElement(element)) continue;
+		if (hasKeyboardHandler(element) || isFocusable(element)) continue;
+		const mouseEvents = [];
+		for (const event of MOUSE_ONLY_EVENTS) if (element.hasAttribute(event)) mouseEvents.push(event);
+		const selector = getSelector(element);
+		issues.push({
+			id: `mouse-only-events-${timestamp}-${issues.length}`,
+			ruleId: "mouse-only-event-handlers",
+			impact: "serious",
+			message: `Element has mouse-only event handlers (${mouseEvents.join(", ")}) without keyboard equivalents. Ensure functionality is available via keyboard.`,
+			help: "All functionality must be operable through keyboard",
+			helpUrl: "https://www.w3.org/WAI/WCAG21/Understanding/keyboard",
+			wcagTags: ["wcag211", "wcag21a"],
+			nodes: [{
+				selector,
+				html: element.outerHTML.slice(0, 200)
+			}],
+			meetsThreshold: meetsThreshold("serious", threshold),
+			timestamp
+		});
+	}
+	return issues;
+}
+/**
+* Custom rule: Static element with interactive semantics
+*
+* Detects elements like <div> or <span> that have role="button" but lack
+* proper keyboard handling (tabindex and key events).
+*/
+function checkStaticElementInteraction(context = document, threshold = "serious") {
+	const issues = [];
+	const timestamp = Date.now();
+	const roleSelectors = Array.from(INTERACTIVE_ROLES).map((role) => `[role="${role}"]`).join(", ");
+	const elements = context.querySelectorAll(roleSelectors);
+	for (const element of elements) {
+		if (isInsideDevtools(element)) continue;
+		if (isInteractiveElement(element)) continue;
+		const role = element.getAttribute("role");
+		const hasFocus = isFocusable(element);
+		const hasKeyboard = hasKeyboardHandler(element);
+		if (!hasFocus) {
+			const selector = getSelector(element);
+			issues.push({
+				id: `static-element-no-tabindex-${timestamp}-${issues.length}`,
+				ruleId: "static-element-interaction",
+				impact: "serious",
+				message: `Element with role="${role}" is not focusable. Add tabindex="0" to make it keyboard accessible.`,
+				help: "Elements with interactive roles must be focusable",
+				helpUrl: "https://www.w3.org/WAI/WCAG21/Techniques/aria/ARIA4#description",
+				wcagTags: [
+					"wcag211",
+					"wcag21a",
+					"wcag412"
+				],
+				nodes: [{
+					selector,
+					html: element.outerHTML.slice(0, 200)
+				}],
+				meetsThreshold: meetsThreshold("serious", threshold),
+				timestamp
+			});
+		}
+		if (role && [
+			"button",
+			"link",
+			"menuitem",
+			"option"
+		].includes(role) && !hasKeyboard && hasClickHandler(element)) {
+			const selector = getSelector(element);
+			issues.push({
+				id: `static-element-no-keyboard-${timestamp}-${issues.length}`,
+				ruleId: "static-element-interaction",
+				impact: "moderate",
+				message: `Element with role="${role}" has click handler but no keyboard handler. Add onKeyDown to handle Enter/Space.`,
+				help: "Elements with button-like roles should respond to Enter and Space keys",
+				helpUrl: "https://www.w3.org/WAI/WCAG21/Techniques/aria/ARIA4#description",
+				wcagTags: ["wcag211", "wcag21a"],
+				nodes: [{
+					selector,
+					html: element.outerHTML.slice(0, 200)
+				}],
+				meetsThreshold: meetsThreshold("moderate", threshold),
+				timestamp
+			});
+		}
+	}
+	return issues;
+}
+/**
+* Run all enabled custom rules
+*/
+function runCustomRules(context = document, config = {}, threshold = "serious") {
+	const { clickHandlerOnNonInteractive = true, mouseOnlyEventHandlers = true, staticElementInteraction = true } = config;
+	const issues = [];
+	if (clickHandlerOnNonInteractive) issues.push(...checkClickHandlerOnNonInteractive(context, threshold));
+	if (mouseOnlyEventHandlers) issues.push(...checkMouseOnlyEvents(context, threshold));
+	if (staticElementInteraction) issues.push(...checkStaticElementInteraction(context, threshold));
+	return issues;
+}
+/**
+* Get list of custom rule metadata (for UI display)
+*/
+function getCustomRules() {
+	return [
+		{
+			id: "click-handler-on-non-interactive",
+			description: "Ensures click handlers are only on keyboard-accessible elements",
+			tags: [
+				"custom",
+				"cat.keyboard",
+				"wcag21a",
+				"wcag211"
+			]
+		},
+		{
+			id: "mouse-only-event-handlers",
+			description: "Ensures mouse event handlers have keyboard equivalents",
+			tags: [
+				"custom",
+				"cat.keyboard",
+				"wcag21a",
+				"wcag211"
+			]
+		},
+		{
+			id: "static-element-interaction",
+			description: "Ensures elements with interactive roles are properly keyboard accessible",
+			tags: [
+				"custom",
+				"cat.keyboard",
+				"cat.aria",
+				"wcag21a",
+				"wcag211"
+			]
+		}
+	];
+}
+//#endregion
+export { getCustomRules, runCustomRules };
+
+//# sourceMappingURL=custom-audit.utils.js.map

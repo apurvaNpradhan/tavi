@@ -1,0 +1,79 @@
+name: "Bug report"
+description: Report something that is broken
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. A report that can be
+        reproduced is worth far more than one that cannot, so the steps below
+        matter more than the prose.
+
+        If this is a security issue, do not open an issue. See
+        [SECURITY.md](../../SECURITY.md) for private reporting.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "What happened"
+      description: "A clear description of the bug."
+      placeholder: "Example: deleting a workspace leaves its members behind"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: "Steps to reproduce"
+      description: "The smallest sequence that reliably triggers it."
+      placeholder: |
+        Example:
+        1. Sign in as a workspace admin
+        2. Open Settings > Members
+        3. ...
+        4. See the error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_result
+    attributes:
+      label: "Expected behaviour"
+      placeholder: "Example: the member disappears from the list"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_result
+    attributes:
+      label: "Actual behaviour"
+      description: "Include the exact error text or API response, if any."
+      placeholder: "Example: the request returns 404 and the row stays"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "Environment"
+      placeholder: |
+        Example:
+        - Tavi version or commit:
+        - Deployment: docker compose / Dokploy / local pnpm dev
+        - Browser: Chrome 140, Firefox 141
+        - Node version: 22.x
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs or screenshots"
+      description: "API logs, browser console, or a screenshot. Redact secrets."
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: "Anything else"
+      description: "Ruled-out theories, recent changes, related issues."

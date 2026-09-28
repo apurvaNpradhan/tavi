@@ -1,0 +1,44 @@
+export { R as BodyLimitPlugin } from '../../shared/server.D0dr-F8u.js';
+import { MaybeOptionalOptions } from '@orpc/shared';
+import { SendStandardResponseOptions, NodeHttpRequest, NodeHttpResponse } from '@standard-server/node';
+import { Context } from '../../index.js';
+import { StandardHandler, StandardHandlerOptions } from '../standard/index.js';
+import { FriendlyStandardHandlerHandleOptions } from '../standard/index.js';
+import { Router } from '../../index.js';
+import { RPCHandlerCodecOptions } from '../standard/index.js';
+import '@orpc/client';
+import '@orpc/contract';
+import '@standard-server/core';
+
+type NodeHttpHandlerHandleResult = {
+    matched: true;
+} | {
+    matched: false;
+};
+interface NodeHttpHandlerOptions<_T extends Context> {
+    /**
+     * Custom options for `sendStandardResponse`, used to send a `Standard Response`
+     */
+    sendStandardResponse?: SendStandardResponseOptions | undefined;
+}
+declare class NodeHttpHandler<T extends Context> {
+    private readonly standardHandler;
+    private readonly sendStandardResponseOptions;
+    constructor(standardHandler: StandardHandler<T>, options?: NoInfer<NodeHttpHandlerOptions<T>>);
+    handle(request: NodeHttpRequest, response: NodeHttpResponse, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): Promise<NodeHttpHandlerHandleResult>;
+}
+
+interface RPCHandlerOptions<T extends Context> extends NodeHttpHandlerOptions<T>, StandardHandlerOptions<T>, RPCHandlerCodecOptions<T> {
+}
+/**
+ * Serves an oRPC router over the RPC protocol using Node.js built-in
+ * HTTP request/response objects.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/node-http | Node HTTP Adapter}
+ */
+declare class RPCHandler<T extends Context> extends NodeHttpHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<RPCHandlerOptions<T>>);
+}
+
+export { NodeHttpHandler, RPCHandler };
+export type { NodeHttpHandlerHandleResult, NodeHttpHandlerOptions, RPCHandlerOptions };

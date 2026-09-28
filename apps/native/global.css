@@ -1,0 +1,158 @@
+@import "tailwindcss";
+@import "uniwind";
+@import "panelui-native/theme.css";
+
+/* Tailwind only generates the classes it can see, and the components live in
+   the package rather than in this project — without this line every one of
+   them renders unstyled, which reads like a broken install. */
+@source './node_modules/panelui-native/src';
+
+/* PanelUI maps these weight tokens to registered native font faces. */
+@theme {
+  --font-normal: Inter_400Regular;
+  --font-medium: Inter_500Medium;
+  --font-semibold: Inter_600SemiBold;
+  --font-bold: Inter_700Bold;
+  --font-mono: JetBrainsMono_400Regular;
+}
+
+/* Keep PanelUI's light and dark palette aligned with the web semantic tokens.
+   Values are static because Uniwind resolves native theme variables at build
+   time; do not use color-mix() or Tailwind's --alpha() in these overrides. */
+@layer theme {
+  :root {
+    @variant light {
+      --color-background: #ffffff;
+      --color-foreground: #262626;
+      --color-card: #ffffff;
+      --color-card-foreground: #262626;
+      --color-popover: #ffffff;
+      --color-popover-foreground: #262626;
+      --color-overlay: #ffffff;
+      --color-overlay-foreground: #262626;
+      --color-inset: rgba(0, 0, 0, 0.035);
+
+      --color-primary: #262626;
+      --color-primary-foreground: #fafafa;
+      --color-secondary: #f5f5f5;
+      --color-secondary-foreground: #262626;
+      --color-muted: #f5f5f5;
+      --color-muted-foreground: #696969;
+      --color-accent: #f5f5f5;
+      --color-accent-foreground: #262626;
+
+      --color-destructive: #b4261a;
+      --color-destructive-foreground: #8f1d14;
+      --color-destructive-solid-foreground: #ffffff;
+      --color-info: #262626;
+      --color-info-foreground: #525252;
+      --color-info-solid-foreground: #ffffff;
+      --color-success: #262626;
+      --color-success-foreground: #525252;
+      --color-success-solid-foreground: #ffffff;
+      --color-warning: #737373;
+      --color-warning-foreground: #525252;
+      --color-warning-solid-foreground: #ffffff;
+
+      --color-border: #ebebeb;
+      --color-input: #e6e6e6;
+      --color-ring: #a3a3a3;
+      --color-surface: #fafafa;
+      --color-surface-secondary: #f5f5f5;
+      --color-surface-tertiary: #eaeaea;
+      --color-skeleton: rgba(0, 0, 0, 0.1);
+
+      --color-info-soft: rgba(38, 38, 38, 0.06);
+      --color-info-subtle: rgba(38, 38, 38, 0.04);
+      --color-success-soft: rgba(38, 38, 38, 0.06);
+      --color-success-subtle: rgba(38, 38, 38, 0.04);
+      --color-warning-soft: rgba(38, 38, 38, 0.06);
+      --color-warning-subtle: rgba(38, 38, 38, 0.04);
+      --color-destructive-soft: rgba(180, 38, 26, 0.1);
+      --color-destructive-subtle: rgba(180, 38, 26, 0.08);
+
+      --color-chart-1: #262626;
+      --color-chart-2: #525252;
+      --color-chart-3: #737373;
+      --color-chart-4: #a3a3a3;
+      --color-chart-5: #d4d4d4;
+
+      --color-code-keyword: #525252;
+      --color-code-string: #404040;
+      --color-code-number: #737373;
+      --color-code-comment: #888888;
+      --color-code-function: #262626;
+      --color-code-property: #666666;
+      --color-code-punctuation: #737373;
+      --color-code-inserted: #404040;
+      --color-code-deleted: #b4261a;
+    }
+
+    @variant dark {
+      --color-background: #141414;
+      --color-foreground: #f5f5f5;
+      --color-card: #191919;
+      --color-card-foreground: #f5f5f5;
+      --color-popover: #1d1d1d;
+      --color-popover-foreground: #f5f5f5;
+      --color-overlay: #232323;
+      --color-overlay-foreground: #f5f5f5;
+      --color-inset: rgba(0, 0, 0, 0.22);
+
+      --color-primary: #f5f5f5;
+      --color-primary-foreground: #262626;
+      --color-secondary: #1d1d1d;
+      --color-secondary-foreground: #f5f5f5;
+      --color-muted: #1d1d1d;
+      --color-muted-foreground: #818181;
+      --color-accent: #1d1d1d;
+      --color-accent-foreground: #f5f5f5;
+
+      --color-destructive: #c4433a;
+      --color-destructive-foreground: #e0726a;
+      --color-destructive-solid-foreground: #ffffff;
+      --color-info: #e5e5e5;
+      --color-info-foreground: #a3a3a3;
+      --color-info-solid-foreground: #141414;
+      --color-success: #e5e5e5;
+      --color-success-foreground: #a3a3a3;
+      --color-success-solid-foreground: #141414;
+      --color-warning: #a3a3a3;
+      --color-warning-foreground: #a3a3a3;
+      --color-warning-solid-foreground: #141414;
+
+      --color-border: #222222;
+      --color-input: #272727;
+      --color-ring: #737373;
+      --color-surface: #191919;
+      --color-surface-secondary: #1d1d1d;
+      --color-surface-tertiary: #232323;
+      --color-skeleton: rgba(255, 255, 255, 0.13);
+
+      --color-info-soft: rgba(229, 229, 229, 0.08);
+      --color-info-subtle: rgba(229, 229, 229, 0.06);
+      --color-success-soft: rgba(229, 229, 229, 0.08);
+      --color-success-subtle: rgba(229, 229, 229, 0.06);
+      --color-warning-soft: rgba(229, 229, 229, 0.08);
+      --color-warning-subtle: rgba(229, 229, 229, 0.06);
+      --color-destructive-soft: rgba(196, 67, 58, 0.08);
+      --color-destructive-subtle: rgba(196, 67, 58, 0.06);
+
+      --color-chart-1: #f5f5f5;
+      --color-chart-2: #d4d4d4;
+      --color-chart-3: #a3a3a3;
+      --color-chart-4: #737373;
+      --color-chart-5: #525252;
+
+      --color-code-keyword: #d4d4d4;
+      --color-code-string: #e5e5e5;
+      --color-code-number: #a3a3a3;
+      --color-code-comment: #737373;
+      --color-code-function: #f5f5f5;
+      --color-code-property: #a3a3a3;
+      --color-code-punctuation: #737373;
+      --color-code-inserted: #e5e5e5;
+      --color-code-deleted: #e0726a;
+    }
+  }
+}

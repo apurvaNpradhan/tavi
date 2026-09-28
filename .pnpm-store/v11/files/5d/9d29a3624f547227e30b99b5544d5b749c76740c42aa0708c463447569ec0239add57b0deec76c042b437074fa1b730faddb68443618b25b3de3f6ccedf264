@@ -1,0 +1,1070 @@
+import { safeDecodeURIComponent, safeEncodeURIComponent, AbortError, AsyncIteratorClass, getOrBind, isTypescriptObject, isAsyncIteratorObject } from '@standard-server/shared';
+export { AbortError, AsyncIteratorClass, SequentialIdGenerator, getOrBind, isAsyncIteratorObject, isTypescriptObject, parseEmptyableJSON, safeDecodeURIComponent, safeEncodeURIComponent, sequential, sleep, stringifyJSON, toArray } from '@standard-server/shared';
+
+function resolveMaybeOptionalOptions(rest) {
+  return rest[0] ?? {};
+}
+
+function splitInHalf(arr) {
+  const half = Math.ceil(arr.length / 2);
+  return [arr.slice(0, half), arr.slice(half)];
+}
+
+async function loadBytes(source) {
+  if (typeof source.bytes === "function") {
+    return source.bytes();
+  }
+  return new Uint8Array(await source.arrayBuffer());
+}
+function toStringOrBytes(source) {
+  if (typeof source === "string") {
+    return source;
+  }
+  if (source instanceof ArrayBuffer) {
+    return new Uint8Array(source);
+  }
+  if (Array.isArray(source)) {
+    return concatBytes(source);
+  }
+  if (source instanceof Uint8Array) {
+    return source;
+  }
+  return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+}
+function toBytes(item) {
+  if (typeof item === "string") {
+    return new TextEncoder().encode(item);
+  }
+  if (item instanceof ArrayBuffer) {
+    return new Uint8Array(item);
+  }
+  if (item instanceof Uint8Array) {
+    return item;
+  }
+  return new Uint8Array(item.buffer, item.byteOffset, item.byteLength);
+}
+function concatBytes(items) {
+  const chunks = items.map(toBytes);
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+function isDeepEqual(a, b) {
+  return isDeepEqualInternal(a, b, /* @__PURE__ */ new WeakMap());
+}
+function isDeepEqualInternal(a, b, visited) {
+  if (Object.is(a, b)) {
+    return true;
+  }
+  if (typeof a !== typeof b) {
+    return false;
+  }
+  if (a === null || typeof a !== "object") {
+    return false;
+  }
+  if (b === null || typeof b !== "object") {
+    return false;
+  }
+  const isArray = Array.isArray(a);
+  if (isArray !== Array.isArray(b)) {
+    return false;
+  }
+  if (isArray && a.length !== b.length) {
+    return false;
+  }
+  const aRecord = a;
+  const bRecord = b;
+  const visitedMatches = visited.get(a);
+  if (visitedMatches?.has(b)) {
+    return true;
+  }
+  if (visitedMatches) {
+    visitedMatches.add(b);
+  } else {
+    visited.set(a, new WeakSet([b]));
+  }
+  const aKeys = Object.keys(aRecord).filter((k) => aRecord[k] !== void 0);
+  const bKeys = Object.keys(bRecord).filter((k) => bRecord[k] !== void 0);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  for (const key of aKeys) {
+    if (!Object.hasOwn(bRecord, key)) {
+      return false;
+    }
+    if (!isDeepEqualInternal(aRecord[key], bRecord[key], visited)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const ORPC_NAME = "orpc";
+
+function isAbortError(error) {
+  return error instanceof Error && error.name.includes("Abort");
+}
+
+const AsyncGeneratorFunction = Object.getPrototypeOf(async function* () {
+}).constructor;
+function isAsyncGeneratorFunction(value) {
+  return value instanceof AsyncGeneratorFunction;
+}
+function once(fn) {
+  let cached;
+  return () => {
+    if (cached) {
+      return cached.result;
+    }
+    const result = fn();
+    cached = { result };
+    return result;
+  };
+}
+function defer(callback) {
+  if (typeof setTimeout === "function") {
+    setTimeout(callback, 0);
+  } else {
+    Promise.resolve().then(() => Promise.resolve().then(() => Promise.resolve().then(callback)));
+  }
+}
+function tryOrUndefined(fn) {
+  try {
+    return fn();
+  } catch {
+    return void 0;
+  }
+}
+
+function pathToHttpPath(path) {
+  return `/${path.map(safeEncodeURIComponent).join("/")}`;
+}
+function normalizeHttpPath(path) {
+  const paths = path.split("/");
+  if (paths.at(0) === "") {
+    paths.shift();
+  }
+  return pathToHttpPath(paths.map(safeDecodeURIComponent));
+}
+function mergeHttpPath(a, b) {
+  return `${a.endsWith("/") ? a.slice(0, -1) : a}${b}`;
+}
+function matchesHttpPathPrefix(url, prefix) {
+  if (!url.startsWith(prefix)) {
+    return false;
+  }
+  const charAfterPrefix = url[prefix.length];
+  return charAfterPrefix === "/" || charAfterPrefix === "?" || charAfterPrefix === "#" || charAfterPrefix === void 0 || prefix[prefix.length - 1] === "/";
+}
+function matchesHttpPath(url, path) {
+  const pathWithoutEndSlash = path.endsWith("/") ? path.slice(0, path.length - 1) : path;
+  if (!url.startsWith(pathWithoutEndSlash)) {
+    return false;
+  }
+  let charAfterPrefix = url[pathWithoutEndSlash.length];
+  if (charAfterPrefix === "/") {
+    charAfterPrefix = url[pathWithoutEndSlash.length + 1];
+  }
+  return charAfterPrefix === void 0 || charAfterPrefix === "?" || charAfterPrefix === "#";
+}
+const ACCEPT_ENCODING_QUALITY_REGEX = /^\s*q=([\d.]+)\s*$/i;
+function parseAcceptEncodingQualities(header) {
+  const qualities = /* @__PURE__ */ new Map();
+  for (const part of header?.split(",") ?? []) {
+    const [rawCoding, ...params] = part.split(";");
+    const coding = rawCoding.trim().toLowerCase();
+    if (coding === "") {
+      continue;
+    }
+    const quality = params.map((param) => ACCEPT_ENCODING_QUALITY_REGEX.exec(param)?.[1]).find((value) => value !== void 0);
+    qualities.set(coding, quality === void 0 ? 1 : Number(quality));
+  }
+  return qualities;
+}
+function varyByAcceptEncoding(vary) {
+  if (vary === void 0) {
+    return "accept-encoding";
+  }
+  const fields = vary.split(",").map((field) => field.trim().toLowerCase());
+  return fields.includes("accept-encoding") || fields.includes("*") ? vary : `${vary}, accept-encoding`;
+}
+const CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*no-transform\s*(?:,|$)/i;
+function isNoTransformCacheControl(cacheControl) {
+  if (cacheControl === void 0) {
+    return false;
+  }
+  return CACHE_CONTROL_NO_TRANSFORM_REGEX.test(cacheControl);
+}
+const COMPRESSIBLE_CONTENT_TYPE_REGEX = /^\s*(?:text\/(?!event-stream(?:[;\s]|$))[^;\s]+|application\/(?:javascript|json|xml|xml-dtd|ecmascript|dart|postscript|rtf|tar|toml|vnd\.dart|vnd\.ms-fontobject|vnd\.ms-opentype|wasm|x-httpd-php|x-javascript|x-ns-proxy-autoconfig|x-sh|x-tar|x-virtualbox-hdd|x-virtualbox-ova|x-virtualbox-ovf|x-virtualbox-vbox|x-virtualbox-vdi|x-virtualbox-vhd|x-virtualbox-vmdk|x-www-form-urlencoded)|font\/(?:otf|ttf)|image\/(?:bmp|vnd\.adobe\.photoshop|vnd\.microsoft\.icon|vnd\.ms-dds|x-icon|x-ms-bmp)|message\/rfc822|model\/gltf-binary|x-shader\/x-fragment|x-shader\/x-vertex|[^;\s]+?\+(?:json|text|xml|yaml))(?:[;\s]|$)/i;
+const MAX_COMPRESSIBLE_CONTENT_TYPE_LENGTH = 1024;
+function isCompressibleContentType(contentType) {
+  if (contentType === null || contentType === void 0) {
+    return false;
+  }
+  if (contentType.length > MAX_COMPRESSIBLE_CONTENT_TYPE_LENGTH) {
+    return false;
+  }
+  return COMPRESSIBLE_CONTENT_TYPE_REGEX.test(contentType);
+}
+
+function compareSequentialIds(a, b) {
+  if (a.length !== b.length) {
+    return a.length - b.length;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+class AsyncIdQueue {
+  openIds = /* @__PURE__ */ new Set();
+  queues = /* @__PURE__ */ new Map();
+  waiters = /* @__PURE__ */ new Map();
+  get size() {
+    return this.openIds.size;
+  }
+  open(id) {
+    this.openIds.add(id);
+  }
+  isOpen(id) {
+    return this.openIds.has(id);
+  }
+  push(id, item) {
+    this.assertOpen(id);
+    const pending = this.waiters.get(id);
+    if (pending?.length) {
+      pending.shift()[0](item);
+      if (pending.length === 0) {
+        this.waiters.delete(id);
+      }
+    } else {
+      const items = this.queues.get(id);
+      if (items) {
+        items.push(item);
+      } else {
+        this.queues.set(id, [item]);
+      }
+    }
+  }
+  async pull(id) {
+    this.assertOpen(id);
+    const items = this.queues.get(id);
+    if (items?.length) {
+      const item = items.shift();
+      if (items.length === 0) {
+        this.queues.delete(id);
+      }
+      return item;
+    }
+    return new Promise((resolve, reject) => {
+      const waitingPulls = this.waiters.get(id);
+      const pending = [resolve, reject];
+      if (waitingPulls) {
+        waitingPulls.push(pending);
+      } else {
+        this.waiters.set(id, [pending]);
+      }
+    });
+  }
+  close({ id, reason } = {}) {
+    if (id === void 0) {
+      this.waiters.forEach((pendingPulls, id2) => {
+        const error2 = reason ?? new AbortError(`[AsyncIdQueue] Queue[${id2}] was closed or aborted while waiting for pulling.`);
+        pendingPulls.forEach(([, reject]) => reject(error2));
+      });
+      this.waiters.clear();
+      this.openIds.clear();
+      this.queues.clear();
+      return;
+    }
+    const error = reason ?? new AbortError(`[AsyncIdQueue] Queue[${id}] was closed or aborted while waiting for pulling.`);
+    this.waiters.get(id)?.forEach(([, reject]) => reject(error));
+    this.waiters.delete(id);
+    this.openIds.delete(id);
+    this.queues.delete(id);
+  }
+  assertOpen(id) {
+    if (!this.isOpen(id)) {
+      throw new Error(`[AsyncIdQueue] Cannot access queue[${id}] because it is not open or aborted.`);
+    }
+  }
+}
+
+const TRACER_SYMBOL = Symbol.for("ORPC_TRACER");
+function setTracer(tracer) {
+  globalThis[TRACER_SYMBOL] = tracer;
+}
+function getTracer() {
+  return globalThis[TRACER_SYMBOL];
+}
+function startSpan(options) {
+  const tracer = getTracer();
+  if (!tracer) {
+    return void 0;
+  }
+  if (typeof options === "string") {
+    return tracer.startSpan(options);
+  }
+  return tracer.startSpan(options.name, options.parent);
+}
+function recordSpanError(span, error) {
+  if (!span) {
+    return;
+  }
+  span.recordException(isAbortError(error) ? "info" : "error", toTracingException(error));
+}
+function setSpanAttributeIfDefined(span, key, value) {
+  if (!span || value === void 0) {
+    return;
+  }
+  span.setAttribute(key, value);
+}
+function toTracingException(error) {
+  if (error instanceof Error) {
+    const exception = {
+      message: error.message,
+      name: error.name,
+      stack: error.stack
+    };
+    if ("code" in error && (typeof error.code === "string" || typeof error.code === "number")) {
+      exception.code = error.code;
+    }
+    return exception;
+  }
+  return { message: String(error) };
+}
+function toSpanAttributeValue(data) {
+  if (data === void 0) {
+    return "undefined";
+  }
+  try {
+    return JSON.stringify(data, (_, value) => {
+      if (typeof value === "bigint") {
+        return value.toString();
+      }
+      if (value instanceof Map || value instanceof Set) {
+        return Array.from(value);
+      }
+      return value;
+    });
+  } catch {
+    return String(data);
+  }
+}
+async function runWithSpan(options, fn) {
+  const tracer = getTracer();
+  if (!tracer) {
+    return fn();
+  }
+  const name = typeof options === "string" ? options : options.name;
+  const parent = typeof options === "string" ? void 0 : options.parent;
+  return tracer.startActiveSpan(name, parent, async (span) => {
+    try {
+      return await fn(span);
+    } catch (e) {
+      recordSpanError(span, e);
+      throw e;
+    } finally {
+      span.end();
+    }
+  });
+}
+function runInSpanContext(span, fn) {
+  const tracer = getTracer();
+  if (!span || !tracer) {
+    return fn();
+  }
+  return tracer.withActiveSpan(span, fn);
+}
+
+function wrapAsyncIterator(iterator, { runWith, mapResult, mapError, onError, onFinish }) {
+  runWith ??= (run) => run();
+  let isDone;
+  return new AsyncIteratorClass(async () => {
+    try {
+      let result;
+      try {
+        result = await runWith(() => iterator.next());
+        isDone = result.done;
+      } catch (error) {
+        isDone = true;
+        throw error;
+      }
+      return mapResult ? await mapResult(result) : result;
+    } catch (error) {
+      await onError?.(error);
+      throw mapError ? await mapError(error) : error;
+    }
+  }, async (_state) => {
+    try {
+      if (!isDone) {
+        try {
+          await runWith(async () => iterator.return?.());
+        } catch (error) {
+          await onError?.(error);
+          throw error;
+        }
+      }
+    } finally {
+      await onFinish?.();
+    }
+  });
+}
+function traceAsyncIterator(options, iterator) {
+  const getSpan = once(() => startSpan(options));
+  return wrapAsyncIterator(iterator, {
+    runWith: (run) => runInSpanContext(getSpan(), run),
+    mapResult(result) {
+      getSpan()?.addEvent(result.done ? "completed" : "yielded");
+      return result;
+    },
+    onError(error) {
+      recordSpanError(getSpan(), error);
+    },
+    onFinish() {
+      getSpan()?.end();
+    }
+  });
+}
+function replicateAsyncIterator(source, count) {
+  const queue = new AsyncIdQueue();
+  const ids = Array.from({ length: count }, (_, i) => i.toString());
+  let isSourceFinished = false;
+  const start = once(async () => {
+    try {
+      while (true) {
+        const item = await source.next();
+        ids.forEach((id) => {
+          if (queue.isOpen(id)) {
+            queue.push(id, { next: item });
+          }
+        });
+        if (item.done) {
+          break;
+        }
+      }
+    } catch (error) {
+      ids.forEach((id) => {
+        if (queue.isOpen(id)) {
+          queue.push(id, { error });
+        }
+      });
+    } finally {
+      isSourceFinished = true;
+    }
+  });
+  const replicated = ids.map((id) => {
+    queue.open(id);
+    return new AsyncIteratorClass(
+      async () => {
+        start();
+        const item = await queue.pull(id);
+        if (item.next) {
+          return item.next;
+        }
+        throw item.error;
+      },
+      async ({ kind, error }) => {
+        queue.close({ id, reason: error });
+        if (kind === "cancelled" && !queue.size && !isSourceFinished) {
+          isSourceFinished = true;
+          await source?.return?.();
+        }
+      }
+    );
+  });
+  return replicated;
+}
+function consumeAsyncIterator(iterator, options) {
+  void (async () => {
+    let onFinishState;
+    try {
+      const resolvedIterator = await iterator;
+      while (true) {
+        const { done, value } = await resolvedIterator.next();
+        if (done) {
+          const realValue = value;
+          onFinishState = [null, realValue, true];
+          options.onSuccess?.(realValue);
+          break;
+        }
+        options.onEvent(value);
+      }
+    } catch (error) {
+      onFinishState = [error, void 0, false];
+      options.onError?.(error);
+    } finally {
+      options.onFinish?.(onFinishState);
+    }
+  })();
+  return async () => {
+    await (await iterator)?.return?.();
+  };
+}
+
+function value(value2, ...args) {
+  if (typeof value2 === "function") {
+    return value2(...args);
+  }
+  return value2;
+}
+
+function override(target, partial) {
+  const proxy = new Proxy(typeof target === "function" ? partial : target, {
+    get(_, prop) {
+      const targetValue = prop in partial ? partial : value(target);
+      return getOrBind(targetValue, prop);
+    },
+    has(_, prop) {
+      return Reflect.has(partial, prop) || Reflect.has(value(target), prop);
+    }
+  });
+  return proxy;
+}
+
+function findDeepMatches(check, payload, segments = [], maps = [], values = []) {
+  if (check(payload)) {
+    maps.push(segments);
+    values.push(payload);
+  } else if (Array.isArray(payload)) {
+    payload.forEach((v, i) => {
+      findDeepMatches(check, v, [...segments, i], maps, values);
+    });
+  } else if (isPlainObject(payload)) {
+    for (const key of Object.keys(payload)) {
+      findDeepMatches(check, payload[key], [...segments, key], maps, values);
+    }
+  }
+  return { maps, values };
+}
+function getConstructor(value) {
+  if (!isTypescriptObject(value)) {
+    return null;
+  }
+  return Object.getPrototypeOf(value)?.constructor;
+}
+function* getConstructors(value) {
+  if (!isTypescriptObject(value)) {
+    return;
+  }
+  let proto = Object.getPrototypeOf(value);
+  while (proto != null) {
+    if (proto.constructor) {
+      yield proto.constructor;
+    }
+    proto = Object.getPrototypeOf(proto);
+  }
+}
+function isPlainObject(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || !proto || !proto.constructor;
+}
+function getOwn(object, key) {
+  return Object.hasOwn(object, key) ? object[key] : void 0;
+}
+function get(object, path) {
+  let current = object;
+  for (const key of path) {
+    if (!isTypescriptObject(current)) {
+      return void 0;
+    }
+    current = getOwn(current, key);
+  }
+  return current;
+}
+function set(root, path, value) {
+  let current = root;
+  for (let i = 0; i < path.length - 1; i++) {
+    const key = path[i];
+    const next = getOwn(current, key);
+    if (!isTypescriptObject(next)) {
+      const child = {};
+      setOwn(current, key, child);
+      current = child;
+    } else {
+      current = next;
+    }
+  }
+  setOwn(current, path.at(-1), value);
+}
+function setOwn(object, key, value) {
+  if (key === "__proto__") {
+    Object.defineProperty(object, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true
+    });
+  } else {
+    object[key] = value;
+  }
+}
+function mergeTwoLevels(first, second) {
+  if (!isPlainObject(first) || !isPlainObject(second)) {
+    return second;
+  }
+  const result = { ...first, ...second };
+  for (const key of Object.keys(second)) {
+    if (!Object.hasOwn(first, key)) {
+      continue;
+    }
+    const firstValue = first[key];
+    const secondValue = second[key];
+    if (isPlainObject(firstValue) && isPlainObject(secondValue)) {
+      result[key] = { ...firstValue, ...secondValue };
+    }
+  }
+  return result;
+}
+function omit(obj, keys) {
+  const result = { ...obj };
+  for (const key of keys) {
+    delete result[key];
+  }
+  return result;
+}
+function clone(value) {
+  return cloneWithVisited(value, /* @__PURE__ */ new WeakMap());
+}
+function cloneWithVisited(value, visited) {
+  if (Array.isArray(value)) {
+    const existing = visited.get(value);
+    if (existing) {
+      return existing;
+    }
+    const result = [];
+    visited.set(value, result);
+    for (const item of value) {
+      result.push(cloneWithVisited(item, visited));
+    }
+    return result;
+  }
+  if (isPlainObject(value)) {
+    const existing = visited.get(value);
+    if (existing) {
+      return existing;
+    }
+    const result = {};
+    visited.set(value, result);
+    for (const key of Object.keys(value)) {
+      setOwn(result, key, cloneWithVisited(value[key], visited));
+    }
+    for (const sym of Object.getOwnPropertySymbols(value)) {
+      setOwn(result, sym, cloneWithVisited(value[sym], visited));
+    }
+    return result;
+  }
+  return value;
+}
+function copyOnWrite(parent, key, original) {
+  const value = parent[key];
+  if (value !== original) {
+    return value;
+  }
+  let copy;
+  if (Array.isArray(value)) {
+    copy = value.slice();
+  } else if (isPlainObject(value)) {
+    copy = { ...value };
+  } else {
+    return value;
+  }
+  setOwn(parent, key, copy);
+  return copy;
+}
+function isPropertyKey(value) {
+  const type = typeof value;
+  return type === "string" || type === "number" || type === "symbol";
+}
+const NullProtoObj = /* @__PURE__ */ (() => {
+  const e = function() {
+  };
+  e.prototype = /* @__PURE__ */ Object.create(null);
+  Object.freeze(e.prototype);
+  return e;
+})();
+function bindMethods(obj, options = {}) {
+  const unbound = new Set(options.unbound);
+  const methods = new NullProtoObj();
+  let current = obj;
+  while (current && current !== Object.prototype) {
+    for (const key of Object.getOwnPropertyNames(current)) {
+      if (key === "constructor" || key in methods) {
+        continue;
+      }
+      const val = getOrBind(obj, key, { bind: !unbound.has(key) });
+      if (typeof val === "function") {
+        methods[key] = val;
+      }
+    }
+    for (const sym of Object.getOwnPropertySymbols(current)) {
+      if (sym in methods) {
+        continue;
+      }
+      const val = getOrBind(obj, sym, { bind: !unbound.has(sym) });
+      if (typeof val === "function") {
+        methods[sym] = val;
+      }
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return methods;
+}
+
+function promiseWithResolvers() {
+  const result = {};
+  result.promise = new Promise((resolve, reject) => {
+    result.resolve = resolve;
+    result.reject = reject;
+  });
+  return result;
+}
+
+function replicateReadableStream(stream, count) {
+  if (count <= 0) {
+    return [];
+  }
+  const replicated = [];
+  let pending = stream;
+  for (let index = 0; index < count - 1; index++) {
+    const [replica, remainder] = pending.tee();
+    replicated.push(replica);
+    pending = remainder;
+  }
+  replicated.push(pending);
+  return replicated;
+}
+function wrapReadableStream(stream, { runWith, mapResult, mapError, onError, onFinish }) {
+  runWith ??= (run) => run();
+  const reader = once(() => stream.getReader());
+  const finish = once(async () => onFinish?.());
+  return new ReadableStream({
+    async pull(controller) {
+      let result;
+      try {
+        const readResult = await runWith(() => reader().read());
+        result = mapResult ? await mapResult(readResult) : readResult;
+      } catch (error) {
+        try {
+          await onError?.(error);
+          controller.error(mapError ? await mapError(error) : error);
+        } finally {
+          await finish();
+        }
+        return;
+      }
+      if (result.done) {
+        controller.close();
+        await finish();
+      } else {
+        controller.enqueue(result.value);
+      }
+    },
+    async cancel(reason) {
+      try {
+        try {
+          await runWith(() => reader().cancel(reason));
+        } catch (error) {
+          await onError?.(error);
+          throw error;
+        }
+      } finally {
+        await finish();
+      }
+    }
+  });
+}
+function traceReadableStream(options, stream) {
+  const getSpan = once(() => startSpan(options));
+  return wrapReadableStream(stream, {
+    runWith: (run) => runInSpanContext(getSpan(), run),
+    mapResult(result) {
+      getSpan()?.addEvent(result.done ? "closed" : "enqueued");
+      return result;
+    },
+    onError(error) {
+      recordSpanError(getSpan(), error);
+    },
+    onFinish() {
+      getSpan()?.end();
+    }
+  });
+}
+function streamToAsyncIteratorObject(stream, { signal } = {}) {
+  const reader = stream.getReader();
+  let cancelledBySignal = false;
+  return new AsyncIteratorClass(
+    async () => {
+      if (signal?.aborted) {
+        cancelledBySignal = true;
+        throw signal.reason;
+      }
+      if (!signal) {
+        return reader.read();
+      }
+      const { promise, reject } = promiseWithResolvers();
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        return await Promise.race([
+          reader.read(),
+          promise.catch(async (reason) => {
+            cancelledBySignal = true;
+            throw reason;
+          })
+        ]);
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
+    },
+    async ({ kind, error }) => {
+      if (kind === "cancelled" || kind === "error" && cancelledBySignal) {
+        await reader.cancel(error);
+      }
+    }
+  );
+}
+function asyncIteratorToStream(iterator) {
+  return new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await iterator.next();
+      if (done) {
+        controller.close();
+      } else {
+        controller.enqueue(value);
+      }
+    },
+    async cancel() {
+      await iterator.return?.();
+    }
+  });
+}
+function asyncIteratorToUnproxiedDataStream(iterator) {
+  return new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await iterator.next();
+      if (done) {
+        controller.close();
+      } else {
+        const unproxied = isPlainObject(value) ? { ...value } : Array.isArray(value) ? value.map((i) => i) : value;
+        controller.enqueue(unproxied);
+      }
+    },
+    async cancel() {
+      await iterator.return?.();
+    }
+  });
+}
+
+function onStart(callback) {
+  return async (options, ...rest) => {
+    await callback(options, ...rest);
+    return await options.next();
+  };
+}
+function onSuccess(callback) {
+  return async (options, ...rest) => {
+    const result = await options.next();
+    await callback(result, options, ...rest);
+    return result;
+  };
+}
+function onError(callback) {
+  return async (options, ...rest) => {
+    try {
+      return await options.next();
+    } catch (error) {
+      await callback(error, options, ...rest);
+      throw error;
+    }
+  };
+}
+function onFinish(callback) {
+  let state;
+  return async (options, ...rest) => {
+    try {
+      const result = await options.next();
+      state = [null, result, true];
+      return result;
+    } catch (error) {
+      state = [error, void 0, false];
+      throw error;
+    } finally {
+      await callback(state, options, ...rest);
+    }
+  };
+}
+function onAsyncIteratorObjectError(callback) {
+  return async (options, ...rest) => {
+    const output = await options.next();
+    if (!isAsyncIteratorObject(output)) {
+      return output;
+    }
+    return override(output, wrapAsyncIterator(output, {
+      onError: (error) => callback(error, options, ...rest)
+    }));
+  };
+}
+function onReadableStreamError(callback) {
+  return async (options, ...rest) => {
+    const output = await options.next();
+    if (!(output instanceof ReadableStream)) {
+      return output;
+    }
+    return override(output, wrapReadableStream(output, {
+      onError: (error) => callback(error, options, ...rest)
+    }));
+  };
+}
+function intercept(interceptors, options, main) {
+  if (!interceptors?.length) {
+    return main(options);
+  }
+  const next = (options2, index) => {
+    const interceptor = interceptors[index];
+    if (!interceptor) {
+      return main(options2);
+    }
+    return interceptor({
+      ...options2,
+      next: (newOptions = options2) => next(newOptions, index + 1)
+    });
+  };
+  return next(options, 0);
+}
+
+function sortPlugins(plugins) {
+  const pluginCount = plugins.length;
+  const pluginIdToIndices = /* @__PURE__ */ new Map();
+  for (let i = 0; i < pluginCount; i++) {
+    const plugin = plugins[i];
+    const indices = pluginIdToIndices.get(plugin.name);
+    if (indices === void 0) {
+      pluginIdToIndices.set(plugin.name, [i]);
+    } else {
+      indices.push(i);
+    }
+  }
+  const dependencies = Array.from({ length: pluginCount }, () => []);
+  for (let i = 0; i < pluginCount; i++) {
+    const plugin = plugins[i];
+    if (plugin.before !== void 0) {
+      for (const beforeId of plugin.before) {
+        const beforeIndices = pluginIdToIndices.get(beforeId);
+        if (beforeIndices !== void 0) {
+          for (const beforeIndex of beforeIndices) {
+            dependencies[beforeIndex].push(i);
+          }
+        }
+      }
+    }
+    if (plugin.after !== void 0) {
+      for (const afterId of plugin.after) {
+        const afterIndices = pluginIdToIndices.get(afterId);
+        if (afterIndices !== void 0) {
+          for (const afterIndex of afterIndices) {
+            dependencies[i].push(afterIndex);
+          }
+        }
+      }
+    }
+  }
+  const sorted = [];
+  const placed = /* @__PURE__ */ new Set();
+  while (sorted.length < pluginCount) {
+    const next = plugins.findIndex((_, i) => !placed.has(i) && dependencies[i].every((dependency) => placed.has(dependency)));
+    if (next === -1) {
+      throw new Error(`Circular dependency detected involving plugin "${findCyclicPlugin(plugins, dependencies, placed).name}"`);
+    }
+    placed.add(next);
+    sorted.push(plugins[next]);
+  }
+  return sorted;
+}
+function findCyclicPlugin(plugins, dependencies, placed) {
+  const seen = /* @__PURE__ */ new Set();
+  let current = plugins.findIndex((_, i) => !placed.has(i));
+  while (!seen.has(current)) {
+    seen.add(current);
+    current = dependencies[current].find((dependency) => !placed.has(dependency));
+  }
+  return plugins[current];
+}
+
+function allAbortSignal(signals) {
+  const realSignals = signals.filter((signal) => signal !== void 0);
+  if (realSignals.length === 0 || realSignals.length !== signals.length) {
+    return void 0;
+  }
+  const controller = new AbortController();
+  const abortIfAllAborted = () => {
+    if (realSignals.every((signal) => signal.aborted)) {
+      controller.abort();
+    }
+  };
+  abortIfAllAborted();
+  for (const signal of realSignals) {
+    signal.addEventListener("abort", () => {
+      abortIfAllAborted();
+    }, {
+      once: true,
+      signal: controller.signal
+    });
+  }
+  return controller.signal;
+}
+function anyAbortSignal(signals) {
+  const realSignals = signals.filter((signal) => signal !== void 0);
+  if (realSignals.length === 0) {
+    return void 0;
+  }
+  if (realSignals.length === 1) {
+    return realSignals[0];
+  }
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+    return AbortSignal.any(realSignals);
+  }
+  const controller = new AbortController();
+  for (const signal of realSignals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener("abort", () => {
+      controller.abort(signal.reason);
+    }, {
+      once: true,
+      signal: controller.signal
+    });
+  }
+  return controller.signal;
+}
+async function runWithSignal(signal, fn) {
+  if (!signal) {
+    return fn();
+  }
+  signal.throwIfAborted();
+  const { promise, reject, resolve } = promiseWithResolvers();
+  let abortListener;
+  signal.addEventListener("abort", abortListener = () => {
+    reject(signal.reason);
+    abortListener = void 0;
+  });
+  try {
+    fn().then(resolve, reject);
+    return await promise;
+  } finally {
+    if (abortListener) {
+      signal.removeEventListener("abort", abortListener);
+    }
+  }
+}
+
+export { AsyncIdQueue, NullProtoObj, ORPC_NAME, allAbortSignal, anyAbortSignal, asyncIteratorToStream, asyncIteratorToUnproxiedDataStream, bindMethods, clone, compareSequentialIds, consumeAsyncIterator, copyOnWrite, defer, findDeepMatches, get, getConstructor, getConstructors, getOwn, getTracer, intercept, isAbortError, isAsyncGeneratorFunction, isCompressibleContentType, isDeepEqual, isNoTransformCacheControl, isPlainObject, isPropertyKey, loadBytes, matchesHttpPath, matchesHttpPathPrefix, mergeHttpPath, mergeTwoLevels, normalizeHttpPath, omit, onAsyncIteratorObjectError, onError, onFinish, onReadableStreamError, onStart, onSuccess, once, override, parseAcceptEncodingQualities, pathToHttpPath, promiseWithResolvers, recordSpanError, replicateAsyncIterator, replicateReadableStream, resolveMaybeOptionalOptions, runInSpanContext, runWithSignal, runWithSpan, set, setOwn, setSpanAttributeIfDefined, setTracer, sortPlugins, splitInHalf, startSpan, streamToAsyncIteratorObject, toSpanAttributeValue, toStringOrBytes, toTracingException, traceAsyncIterator, traceReadableStream, tryOrUndefined, value, varyByAcceptEncoding, wrapAsyncIterator, wrapReadableStream };

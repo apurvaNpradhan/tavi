@@ -1,0 +1,3 @@
+export { A11yDevtoolsPanel } from './production/A11yDevtools.js';
+export type { A11yDevtoolsReactInit } from './production/A11yDevtools.js';
+export { a11yDevtoolsPlugin } from './production/plugin.js';

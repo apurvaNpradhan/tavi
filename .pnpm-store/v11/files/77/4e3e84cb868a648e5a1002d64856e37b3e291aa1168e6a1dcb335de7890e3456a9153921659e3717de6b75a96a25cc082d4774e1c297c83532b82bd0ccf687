@@ -1,0 +1,58 @@
+{
+  "name": "@openapi-spec/downgrader",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Downgrade OpenAPI specifications one minor version at a time: 3.2 to 3.1 and 3.1 to 3.0, for whole documents or individual schemas",
+  "license": "MIT",
+  "funding": [
+    "https://github.com/sponsors/dinwwwh",
+    "https://opencollective.com/middleapi"
+  ],
+  "homepage": "https://github.com/middleapi/openapi-spec",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/middleapi/openapi-spec.git",
+    "directory": "packages/downgrader"
+  },
+  "keywords": [
+    "converter",
+    "downgrade",
+    "oas",
+    "openapi",
+    "openapi-3.0",
+    "openapi-3.1",
+    "openapi-3.2",
+    "openapi-spec",
+    "specification",
+    "swagger",
+    "typescript"
+  ],
+  "sideEffects": false,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    },
+    "./v3.2-to-v3.1": {
+      "types": "./dist/v3.2-to-v3.1.d.mts",
+      "import": "./dist/v3.2-to-v3.1.mjs",
+      "default": "./dist/v3.2-to-v3.1.mjs"
+    },
+    "./v3.1-to-v3.0": {
+      "types": "./dist/v3.1-to-v3.0.d.mts",
+      "import": "./dist/v3.1-to-v3.0.mjs",
+      "default": "./dist/v3.1-to-v3.0.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@openapi-spec/types": "^0.1.0"
+  },
+  "scripts": {
+    "type:check": "tsc -b"
+  }
+}

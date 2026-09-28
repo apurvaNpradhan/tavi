@@ -1,0 +1,23 @@
+import { Context, Router } from '@orpc/server';
+import { NodeHttpHandler, NodeHttpHandlerOptions } from '@orpc/server/node';
+import { StandardHandlerOptions } from '@orpc/server/standard';
+import { OpenAPIHandlerCodecOptions } from '../standard/index.mjs';
+import '@orpc/client';
+import '@orpc/shared';
+import '@standard-server/core';
+import '@orpc/contract';
+import '../../shared/openapi.Dl3gew1x.mjs';
+
+interface OpenAPIHandlerOptions<T extends Context> extends NodeHttpHandlerOptions<T>, StandardHandlerOptions<T>, OpenAPIHandlerCodecOptions<T> {
+}
+/**
+ * Serves oRPC procedures over the OpenAPI (RESTful) protocol using Node.js built-in HTTP request/response.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/node-http | Node HTTP Adapter}
+ */
+declare class OpenAPIHandler<T extends Context> extends NodeHttpHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<OpenAPIHandlerOptions<T>>);
+}
+
+export { OpenAPIHandler };
+export type { OpenAPIHandlerOptions };

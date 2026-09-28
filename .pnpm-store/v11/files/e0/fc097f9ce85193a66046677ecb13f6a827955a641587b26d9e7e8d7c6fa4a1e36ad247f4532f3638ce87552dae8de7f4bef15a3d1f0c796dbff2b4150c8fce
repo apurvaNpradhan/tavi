@@ -1,0 +1,87 @@
+{
+  "name": "html5parser",
+  "description": "A super fast & tiny HTML5 parser",
+  "version": "3.0.0",
+  "author": "acrazing <joking.young@gmail.com>",
+  "keywords": [
+    "html5",
+    "parser",
+    "ast",
+    "attributes"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "browser": "./dist/index.umd.js",
+  "umd": "./dist/index.umd.js",
+  "unpkg": "./dist/index.umd.js",
+  "jsdelivr": "./dist/index.umd.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist/",
+    "src/"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist temp .cache",
+    "bundle": "tsup",
+    "build": "run-s clean bundle",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint-staged": "lint-staged",
+    "prepublishOnly": "run-s test typecheck build",
+    "prepare": "husky || true"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acrazing/html5parser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/acrazing/html5parser/issues"
+  },
+  "homepage": "https://github.com/acrazing/html5parser#readme",
+  "devDependencies": {
+    "@swc/core": "^1.15.33",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^25.8.0",
+    "fs-extra": "^11.3.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.4",
+    "npm-run-all2": "^8.0.4",
+    "prettier": "^3.8.3",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.13",
+    "vitest": "^4.1.6"
+  },
+  "lint-staged": {
+    "*.{js,cjs,mjs,ts,tsx,json,css,less,scss,md}": [
+      "prettier --write"
+    ]
+  },
+  "prettier": {
+    "printWidth": 100,
+    "tabWidth": 2,
+    "useTabs": false,
+    "semi": true,
+    "singleQuote": true,
+    "jsxSingleQuote": false,
+    "trailingComma": "all",
+    "bracketSpacing": true,
+    "bracketSameLine": false,
+    "arrowParens": "always",
+    "endOfLine": "lf"
+  },
+  "packageManager": "yarn@1.22.22"
+}

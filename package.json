@@ -1,0 +1,50 @@
+{
+  "name": "tavi",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "oxlint . --max-warnings 0",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:integration": "turbo test:integration",
+    "i18n:check": "node ./scripts/i18n/check.mjs",
+    "i18n:check:fix": "node ./scripts/i18n/check.mjs --fix",
+    "i18n:report": "node ./scripts/i18n/report.mjs",
+    "i18n:report:fix": "node ./scripts/i18n/report.mjs --fix",
+    "i18n:schema": "node ./scripts/i18n/schema.mjs && oxfmt --write i18n/schema.json",
+    "openapi:check": "node ./scripts/openapi/check.mjs",
+    "openapi:check:fix": "node ./scripts/openapi/check.mjs --fix",
+    "lint:fix": "oxlint . --fix",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "prepare": "node ./scripts/install-git-hooks.mjs"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "@oxlint/plugins": "1.85.0",
+    "@semantic-release/changelog": "^7.0.0",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^11.0.1",
+    "@semantic-release/github": "^12.0.10",
+    "@semantic-release/release-notes-generator": "^14.1.1",
+    "@tanstack/eslint-plugin-query": "5.103.2",
+    "@types/node": "^22.15.3",
+    "conventional-changelog-conventionalcommits": "^10.4.0",
+    "lefthook": "^2.1.14",
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
+    "semantic-release": "^25.0.9",
+    "turbo": "^2.10.8",
+    "typescript": "~5.9.3",
+    "vite": "^8.2.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@11.3.0"
+}

@@ -1,0 +1,21 @@
+import { StandardLazyRequest, StandardResponse } from '@standard-server/core';
+import { FastifyReply, RouteGenericInterface, RawServerBase, FastifyRequest } from 'fastify';
+import { ToNodeHttpBodyOptions } from '@standard-server/node';
+
+/**
+ * A fastify request from any raw server (http, https, http2, http2 secure) and any route generic.
+ */
+type AnyFastifyRequest = FastifyRequest<RouteGenericInterface, RawServerBase>;
+/**
+ * A fastify reply from any raw server (http, https, http2, http2 secure) and any route generic.
+ */
+type AnyFastifyReply = FastifyReply<RouteGenericInterface, RawServerBase>;
+
+declare function toStandardLazyRequest(req: AnyFastifyRequest, reply: AnyFastifyReply): StandardLazyRequest;
+
+interface SendStandardResponseOptions extends ToNodeHttpBodyOptions {
+}
+declare function sendStandardResponse(reply: AnyFastifyReply, standardResponse: StandardResponse, options?: SendStandardResponseOptions): Promise<void>;
+
+export { sendStandardResponse, toStandardLazyRequest };
+export type { AnyFastifyReply, AnyFastifyRequest, SendStandardResponseOptions };

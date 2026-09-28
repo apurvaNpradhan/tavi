@@ -1,0 +1,613 @@
+import { resolveBasePathMeta, getRouterContract, ProcedureContract } from '@orpc/contract';
+import { sortPlugins, stringifyJSON, resolveMaybeOptionalOptions, intercept, toArray, isAsyncIteratorObject, isTypescriptObject, bindMethods, get } from '@orpc/shared';
+import { RECURSIVE_CLIENT_UNWRAP_KEYS } from '@orpc/client';
+import { skipToken } from '@tanstack/query-core';
+
+class CompositeRouterUtilsPlugin {
+  constructor(plugins = []) {
+    this.plugins = plugins;
+    this.plugins = sortPlugins(plugins);
+  }
+  name = "~composite";
+  init(options) {
+    for (const plugin of this.plugins) {
+      if (plugin.init) {
+        options = plugin.init(options);
+      }
+    }
+    return options;
+  }
+  initProcedureOptions(path, options) {
+    for (const plugin of this.plugins) {
+      if (plugin.initProcedureOptions) {
+        options = plugin.initProcedureOptions(path, options);
+      }
+    }
+    return options;
+  }
+}
+
+function generateOperationKey(path, options = {}) {
+  return [
+    ...options.prefix !== void 0 ? [options.prefix] : [],
+    path,
+    {
+      ...options.input !== void 0 ? { input: options.input } : {},
+      ...options.type !== void 0 ? { type: options.type } : {},
+      ...options.fnOptions !== void 0 ? { fnOptions: options.fnOptions } : {}
+    }
+  ];
+}
+
+function liveQuery(queryFn) {
+  return async (context) => {
+    const stream = await queryFn(context);
+    let last;
+    for await (const chunk of stream) {
+      context.signal?.throwIfAborted();
+      last = { chunk };
+      context.client.setQueryData(context.queryKey, chunk);
+    }
+    if (!last) {
+      throw new TypeError(
+        `Live query for ${stringifyJSON(context.queryKey)} did not yield any data. Ensure the query function returns an AsyncIterable with at least one chunk.`
+      );
+    }
+    return last.chunk;
+  };
+}
+
+class SharedUtils {
+  constructor(path, options) {
+    this.path = path;
+    this.options = options;
+  }
+  /**
+   * Generate a **partial matching** key for actions like revalidating queries, checking mutation status, etc.
+   */
+  key(options = {}) {
+    return generateOperationKey(this.path, { ...options, prefix: this.options.prefix });
+  }
+}
+
+function serializableStreamedQuery(queryFn, { refetchMode = "reset", maxChunks = Number.POSITIVE_INFINITY } = {}) {
+  return async (context) => {
+    const query = context.client.getQueryCache().find({ queryKey: context.queryKey, exact: true });
+    const hasPreviousData = !!query && query.state.data !== void 0;
+    if (hasPreviousData) {
+      if (refetchMode === "reset") {
+        query.setState({
+          status: "pending",
+          data: void 0,
+          error: null,
+          fetchStatus: "fetching"
+        });
+      } else {
+        context.client.setQueryData(
+          context.queryKey,
+          (prev = []) => limitArraySize(prev, maxChunks)
+        );
+      }
+    }
+    let result = [];
+    const stream = await queryFn(context);
+    const shouldUpdateCacheDuringStream = !hasPreviousData || refetchMode !== "replace";
+    context.client.setQueryData(
+      context.queryKey,
+      (prev = []) => limitArraySize(prev, maxChunks)
+    );
+    for await (const chunk of stream) {
+      if (context.signal.aborted) {
+        throw context.signal.reason;
+      }
+      result.push(chunk);
+      result = limitArraySize(result, maxChunks);
+      if (shouldUpdateCacheDuringStream) {
+        context.client.setQueryData(
+          context.queryKey,
+          (prev = []) => limitArraySize([...prev, chunk], maxChunks)
+        );
+      }
+    }
+    if (!shouldUpdateCacheDuringStream) {
+      context.client.setQueryData(context.queryKey, result);
+    }
+    const cachedData = context.client.getQueryData(context.queryKey);
+    if (cachedData) {
+      return limitArraySize(cachedData, maxChunks);
+    }
+    return result;
+  };
+}
+function limitArraySize(items, maxSize) {
+  if (items.length <= maxSize) {
+    return items;
+  }
+  return items.slice(items.length - maxSize);
+}
+
+const OPERATION_CONTEXT_SYMBOL = Symbol.for("ORPC_TANSTACK_QUERY_OPERATION_CONTEXT");
+
+const PROCEDURE_UTILS_INTERCEPTOR_KEYS = [
+  "queryInterceptors",
+  "streamedInterceptors",
+  "liveInterceptors",
+  "infiniteInterceptors",
+  "mutationInterceptors"
+];
+const PROCEDURE_UTILS_MODIFIER_KEYS = [
+  "queryKey",
+  "queryOptions",
+  "streamedKey",
+  "streamedOptions",
+  "liveKey",
+  "liveOptions",
+  "infiniteKey",
+  "infiniteOptions",
+  "mutationKey",
+  "mutationOptions"
+];
+function isProcedureUtilsOptions(value) {
+  if (!isTypescriptObject(value)) {
+    return false;
+  }
+  for (const key of Object.keys(value)) {
+    if (value[key] === void 0) {
+      continue;
+    }
+    if (key === "prefix") {
+      if (typeof value[key] !== "string") {
+        return false;
+      }
+    } else if (PROCEDURE_UTILS_INTERCEPTOR_KEYS.includes(key)) {
+      if (!Array.isArray(value[key]) || value[key].some((i) => typeof i !== "function")) {
+        return false;
+      }
+    } else if (PROCEDURE_UTILS_MODIFIER_KEYS.includes(key)) {
+      if (!isTypescriptObject(value[key])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+function mergeProcedureUtilsModifier(base, override) {
+  if (typeof base !== "function" && typeof override !== "function") {
+    return { ...base, ...override };
+  }
+  const applyBase = typeof base === "function" ? base : (options) => ({ ...base, ...options });
+  const applyOverride = typeof override === "function" ? override : (options) => ({ ...override, ...options });
+  return (options) => applyOverride(applyBase(options));
+}
+function mergeProcedureUtilsOptions(base, override) {
+  const merged = { ...base, ...override };
+  for (const key of PROCEDURE_UTILS_INTERCEPTOR_KEYS) {
+    const baseValue = base[key];
+    const overrideValue = override[key];
+    if (baseValue && overrideValue) {
+      merged[key] = [...baseValue, ...overrideValue];
+    }
+  }
+  for (const key of PROCEDURE_UTILS_MODIFIER_KEYS) {
+    const baseValue = base[key];
+    const overrideValue = override[key];
+    if (baseValue && overrideValue) {
+      merged[key] = mergeProcedureUtilsModifier(baseValue, overrideValue);
+    }
+  }
+  return merged;
+}
+class ProcedureUtils extends SharedUtils {
+  /**
+   * Calling corresponding procedure client
+   */
+  call;
+  constructor(path, client, options = {}) {
+    super(path, options);
+    this.call = client;
+  }
+  /**
+   * Generate a **full matching** key for [Query Options](https://orpc.dev/docs/integrations/tanstack-query#query-options).
+   */
+  queryKey(...rest) {
+    let optionsIn = resolveMaybeOptionalOptions(rest);
+    if (typeof this.options.queryKey === "function") {
+      optionsIn = this.options.queryKey(optionsIn);
+    } else if (this.options.queryKey) {
+      optionsIn = { ...this.options.queryKey, ...optionsIn };
+    }
+    const queryKey = optionsIn.queryKey ?? generateOperationKey(this.path, { prefix: this.options.prefix, type: "query", input: optionsIn.input });
+    return queryKey;
+  }
+  /**
+   * Generate options used for useQuery/useSuspenseQuery/prefetchQuery/...
+   */
+  queryOptions(...rest) {
+    let optionsIn = resolveMaybeOptionalOptions(rest);
+    if (typeof this.options.queryOptions === "function") {
+      optionsIn = this.options.queryOptions(optionsIn);
+    } else if (this.options.queryOptions) {
+      optionsIn = { ...this.options.queryOptions, ...optionsIn };
+    }
+    const queryKey = this.queryKey(optionsIn);
+    return {
+      ...optionsIn,
+      queryKey,
+      queryFn: (fnContext) => {
+        return intercept(
+          this.options.queryInterceptors,
+          {
+            path: this.path,
+            context: {
+              [OPERATION_CONTEXT_SYMBOL]: {
+                key: queryKey,
+                type: "query"
+              },
+              ...optionsIn.context
+            },
+            input: optionsIn.input,
+            fnContext
+          },
+          ({ context, input, fnContext: fnContext2 }) => {
+            if (input === skipToken || optionsIn.queryFn === skipToken) {
+              throw new Error("queryFn should not be called when skipToken used for skipping");
+            }
+            if (optionsIn.queryFn) {
+              return optionsIn.queryFn(fnContext2);
+            }
+            return this.call(input, { signal: fnContext2.signal, context });
+          }
+        );
+      },
+      ...optionsIn.input === skipToken || optionsIn.queryFn === skipToken ? { enabled: false } : {}
+    };
+  }
+  /**
+   * Generate a **full matching** key for [Streamed Query Options](https://orpc.dev/docs/integrations/tanstack-query#streamed-query-options).
+   */
+  streamedKey(...rest) {
+    let optionsIn = resolveMaybeOptionalOptions(rest);
+    if (typeof this.options.streamedKey === "function") {
+      optionsIn = this.options.streamedKey(optionsIn);
+    } else if (this.options.streamedKey) {
+      optionsIn = { ...this.options.streamedKey, ...optionsIn };
+    }
+    const queryKey = optionsIn.queryKey ?? generateOperationKey(this.path, { prefix: this.options.prefix, type: "streamed", input: optionsIn.input, fnOptions: optionsIn.queryFnOptions });
+    return queryKey;
+  }
+  /**
+   * Configure queries for [AsyncIteratorObject](https://orpc.dev/docs/async-iterator-object).
+   * This is built on [TanStack Query streamedQuery](https://tanstack.com/query/latest/docs/reference/streamedQuery)
+   * and works with hooks like `useQuery`, `useSuspenseQuery`, or `prefetchQuery`.
+   */
+  streamedOptions(...rest) {
+    let optionsIn = resolveMaybeOptionalOptions(rest);
+    if (typeof this.options.streamedOptions === "function") {
+      optionsIn = this.options.streamedOptions(optionsIn);
+    } else if (this.options.streamedOptions) {
+      optionsIn = { ...this.options.streamedOptions, ...optionsIn };
+    }
+    const queryKey = this.streamedKey(optionsIn);
+    return {
+      ...optionsIn,
+      queryKey,
+      queryFn: (fnContext) => {
+        return intercept(
+          toArray(this.options.streamedInterceptors),
+          {
+            path: this.path,
+            context: {
+              [OPERATION_CONTEXT_SYMBOL]: {
+                key: queryKey,
+                type: "streamed"
+              },
+              ...optionsIn.context
+            },
+            input: optionsIn.input,
+            fnContext
+          },
+          ({ context, fnContext: fnContext2, input }) => {
+            if (input === skipToken || optionsIn.queryFn === skipToken) {
+              throw new Error("queryFn should not be called when skipToken used for skipping");
+            }
+            if (optionsIn.queryFn) {
+              return optionsIn.queryFn(fnContext2);
+            }
+            return serializableStreamedQuery(
+              async (queryContext) => {
+                const output = await this.call(input, { signal: queryContext.signal, context });
+                if (!isAsyncIteratorObject(output)) {
+                  throw new Error("streamedQuery requires an AsyncIteratorObject output");
+                }
+                return output;
+              },
+              optionsIn.queryFnOptions
+            )(fnContext2);
+          }
+        );
+      },
+      ...optionsIn.input === skipToken || optionsIn.queryFn === skipToken ? { enabled: false } : {}
+    };
+  }
+  /**
+   * Generate a **full matching** key for [Live Query Options](https://orpc.dev/docs/integrations/tanstack-query#live-query-options).
+   */
+  liveKey(...rest) {
+    let optionsIn = resolveMaybeOptionalOptions(rest);
+    if (typeof this.options.liveKey === "function") {
+      optionsIn = this.options.liveKey(optionsIn);
+    } else if (this.options.liveKey) {
+      optionsIn = { ...this.options.liveKey, ...optionsIn };
+    }
+    const queryKey = optionsIn.queryKey ?? generateOperationKey(this.path, { prefix: this.options.prefix, type: "live", input: optionsIn.input });
+    return queryKey;
+  }
+  /**
+   * Configure live queries for [AsyncIteratorObject](https://orpc.dev/docs/async-iterator-object).
+   * Unlike `.streamedOptions` which accumulates chunks, live queries replace the entire result with each new chunk received.
+   * Works with hooks like `useQuery`, `useSuspenseQuery`, or `prefetchQuery`.
+   */
+  liveOptions(...rest) {
+    let optionsIn = resolveMaybeOptionalOptions(rest);
+    if (typeof this.options.liveOptions === "function") {
+      optionsIn = this.options.liveOptions(optionsIn);
+    } else if (this.options.liveOptions) {
+      optionsIn = { ...this.options.liveOptions, ...optionsIn };
+    }
+    const queryKey = this.liveKey(optionsIn);
+    return {
+      ...optionsIn,
+      queryKey,
+      queryFn: (fnContext) => {
+        return intercept(
+          toArray(this.options.liveInterceptors),
+          {
+            path: this.path,
+            context: {
+              [OPERATION_CONTEXT_SYMBOL]: {
+                key: queryKey,
+                type: "live"
+              },
+              ...optionsIn.context
+            },
+            input: optionsIn.input,
+            fnContext
+          },
+          ({ fnContext: fnContext2, input, context }) => {
+            if (input === skipToken || optionsIn.queryFn === skipToken) {
+              throw new Error("queryFn should not be called when skipToken used for skipping");
+            }
+            if (optionsIn.queryFn) {
+              return optionsIn.queryFn(fnContext2);
+            }
+            return liveQuery(async (queryContext) => {
+              const output = await this.call(input, {
+                signal: queryContext.signal,
+                context
+              });
+              if (!isAsyncIteratorObject(output)) {
+                throw new Error("liveQuery requires an AsyncIteratorObject output");
+              }
+              return output;
+            })(fnContext2);
+          }
+        );
+      },
+      ...optionsIn.input === skipToken || optionsIn.queryFn === skipToken ? { enabled: false } : {}
+    };
+  }
+  /**
+   * Generate a **full matching** key for [Infinite Query Options](https://orpc.dev/docs/integrations/tanstack-query#infinite-query-options).
+   */
+  infiniteKey(optionsIn) {
+    if (typeof this.options.infiniteKey === "function") {
+      optionsIn = this.options.infiniteKey(optionsIn);
+    } else if (this.options.infiniteKey) {
+      optionsIn = { ...this.options.infiniteKey, ...optionsIn };
+    }
+    const queryKey = optionsIn.queryKey ?? generateOperationKey(this.path, {
+      prefix: this.options.prefix,
+      type: "infinite",
+      input: optionsIn.input === skipToken ? skipToken : optionsIn.input(optionsIn.initialPageParam)
+    });
+    return queryKey;
+  }
+  /**
+   * Generate options used for useInfiniteQuery/useSuspenseInfiniteQuery/prefetchInfiniteQuery/...
+   */
+  infiniteOptions(optionsIn) {
+    if (typeof this.options.infiniteOptions === "function") {
+      optionsIn = this.options.infiniteOptions(optionsIn);
+    } else if (this.options.infiniteOptions) {
+      optionsIn = { ...this.options.infiniteOptions, ...optionsIn };
+    }
+    const queryKey = this.infiniteKey(optionsIn);
+    return {
+      ...optionsIn,
+      queryKey,
+      queryFn: (fnContext) => {
+        return intercept(
+          toArray(this.options.infiniteInterceptors),
+          {
+            path: this.path,
+            context: {
+              [OPERATION_CONTEXT_SYMBOL]: {
+                key: queryKey,
+                type: "infinite"
+              },
+              ...optionsIn.context
+            },
+            input: optionsIn.input === skipToken ? skipToken : optionsIn.input(fnContext.pageParam),
+            fnContext
+          },
+          ({ context, input, fnContext: fnContext2 }) => {
+            if (input === skipToken || optionsIn.queryFn === skipToken) {
+              throw new Error("queryFn should not be called when skipToken used for skipping");
+            }
+            if (optionsIn.queryFn) {
+              return optionsIn.queryFn(fnContext2);
+            }
+            return this.call(input, { signal: fnContext2.signal, context });
+          }
+        );
+      },
+      ...optionsIn.input === skipToken || optionsIn.queryFn === skipToken ? { enabled: false } : {}
+    };
+  }
+  /**
+   * Generate a **full matching** key for [Mutation Options](https://orpc.dev/docs/integrations/tanstack-query#mutation-options).
+   */
+  mutationKey(optionsIn = {}) {
+    if (typeof this.options.mutationKey === "function") {
+      optionsIn = this.options.mutationKey(optionsIn);
+    } else if (this.options.mutationKey) {
+      optionsIn = { ...this.options.mutationKey, ...optionsIn };
+    }
+    const mutationKey = optionsIn.mutationKey ?? generateOperationKey(this.path, { prefix: this.options.prefix, type: "mutation" });
+    return mutationKey;
+  }
+  /**
+   * Generate options used for useMutation/...
+   */
+  mutationOptions(...rest) {
+    let optionsIn = resolveMaybeOptionalOptions(rest);
+    if (typeof this.options.mutationOptions === "function") {
+      optionsIn = this.options.mutationOptions(optionsIn);
+    } else if (this.options.mutationOptions) {
+      optionsIn = { ...this.options.mutationOptions, ...optionsIn };
+    }
+    const mutationKey = this.mutationKey(optionsIn);
+    return {
+      ...optionsIn,
+      mutationKey,
+      mutationFn: (input, fnContext) => {
+        return intercept(
+          toArray(this.options.mutationInterceptors),
+          {
+            path: this.path,
+            context: {
+              [OPERATION_CONTEXT_SYMBOL]: {
+                key: mutationKey,
+                type: "mutation"
+              },
+              ...optionsIn.context
+            },
+            fnContext,
+            input
+          },
+          ({ input: input2, fnContext: fnContext2, context }) => {
+            if (optionsIn.mutationFn) {
+              return optionsIn.mutationFn(input2, fnContext2);
+            }
+            return this.call(input2, { context });
+          }
+        );
+      }
+    };
+  }
+}
+
+function createRouterUtils(client, options = {}) {
+  const plugin = new CompositeRouterUtilsPlugin(options.plugins);
+  options = plugin.init(options);
+  return createRouterUtilsInternal(client, options, plugin);
+}
+function createRouterUtilsInternal(client, options, plugin) {
+  const path = toArray(options.path);
+  const utils = typeof client === "function" && (options.scoped === void 0 || isProcedureUtilsOptions(options.scoped)) ? bindMethods(new ProcedureUtils(
+    path,
+    client,
+    plugin.initProcedureOptions(path, mergeProcedureUtilsOptions(
+      {
+        prefix: options.prefix,
+        queryInterceptors: options.queryInterceptors,
+        streamedInterceptors: options.streamedInterceptors,
+        liveInterceptors: options.liveInterceptors,
+        infiniteInterceptors: options.infiniteInterceptors,
+        mutationInterceptors: options.mutationInterceptors
+      },
+      options.scoped ?? {}
+    ))
+  ), { unbound: ["call"] }) : bindMethods(new SharedUtils(path, options));
+  const cache = /* @__PURE__ */ new Map();
+  const recursive = new Proxy(utils, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop);
+      const nextClient = Reflect.get(client, prop);
+      if (typeof prop !== "string" || RECURSIVE_CLIENT_UNWRAP_KEYS.has(prop) || !isTypescriptObject(nextClient)) {
+        return value;
+      }
+      let result = cache.get(prop);
+      if (result === void 0) {
+        const nextUtils = createRouterUtilsInternal(nextClient, {
+          ...options,
+          path: [...path, prop],
+          scoped: options.scoped?.[prop]
+        }, plugin);
+        result = typeof value !== "function" ? nextUtils : new Proxy(value, {
+          get(target2, prop2) {
+            if (typeof prop2 !== "string" || RECURSIVE_CLIENT_UNWRAP_KEYS.has(prop2)) {
+              return Reflect.get(target2, prop2);
+            }
+            return Reflect.get(nextUtils, prop2);
+          }
+        });
+        cache.set(prop, result);
+      }
+      return result;
+    }
+  });
+  return recursive;
+}
+
+function createContractUtilsFactory(clientFactory, options) {
+  const factory = (contract) => {
+    const client = clientFactory(contract);
+    const path = resolveBasePathMeta(contract);
+    if (path === void 0) {
+      throw new TypeError(
+        "ContractUtilsFactory: procedure contract must define `meta.path` that matches its path in the root router contract."
+      );
+    }
+    return createRouterUtils(client, { ...options, path, scoped: get(options.scoped, path) });
+  };
+  return factory;
+}
+function createContractJsonifiedUtilsFactory(clientFactory, options) {
+  return createContractUtilsFactory(clientFactory, options);
+}
+
+function tanstackQuery(options) {
+  return {
+    name: "~tanstack-query",
+    init(meta) {
+      const current = meta["~tanstack-query"];
+      return {
+        ...meta,
+        "~tanstack-query": current ? mergeProcedureUtilsOptions(current, options) : options
+      };
+    }
+  };
+}
+function getTanstackQueryMeta(procedureOrLazy) {
+  return procedureOrLazy["~orpc"].meta["~tanstack-query"];
+}
+class ContractOptionsUtilsPlugin {
+  constructor(contract) {
+    this.contract = contract;
+  }
+  name = "~contract-options";
+  initProcedureOptions(path, options) {
+    const procedure = getRouterContract(this.contract, path);
+    if (!(procedure instanceof ProcedureContract)) {
+      return options;
+    }
+    const base = getTanstackQueryMeta(procedure);
+    if (!base) {
+      return options;
+    }
+    return mergeProcedureUtilsOptions(base, options);
+  }
+}
+
+export { CompositeRouterUtilsPlugin, ContractOptionsUtilsPlugin, OPERATION_CONTEXT_SYMBOL, ProcedureUtils, SharedUtils, OPERATION_CONTEXT_SYMBOL as TANSTACK_QUERY_OPERATION_CONTEXT_SYMBOL, createContractJsonifiedUtilsFactory, createContractUtilsFactory, createRouterUtils, createRouterUtils as createTanstackQueryUtils, generateOperationKey, getTanstackQueryMeta, isProcedureUtilsOptions, mergeProcedureUtilsOptions, serializableStreamedQuery, tanstackQuery };

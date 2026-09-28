@@ -1,0 +1,226 @@
+import { getCustomRules, runCustomRules } from "./custom-audit.utils.js";
+import { SEVERITY_ORDER } from "./ui.utils.js";
+import axe from "axe-core";
+//#region src/core/utils/ally-audit.utils.ts
+/**
+* Severity levels mapped to numeric values for comparison
+*/
+var IMPACT_SEVERITY = {
+	critical: 4,
+	serious: 3,
+	moderate: 2,
+	minor: 1
+};
+/**
+* Rule set configurations for different presets
+*/
+var RULE_SET_CONFIGS = {
+	wcag2a: { runOnly: {
+		type: "tag",
+		values: ["wcag2a"]
+	} },
+	wcag2aa: { runOnly: {
+		type: "tag",
+		values: ["wcag2a", "wcag2aa"]
+	} },
+	wcag21aa: { runOnly: {
+		type: "tag",
+		values: [
+			"wcag2a",
+			"wcag2aa",
+			"wcag21a",
+			"wcag21aa"
+		]
+	} },
+	wcag22aa: { runOnly: {
+		type: "tag",
+		values: [
+			"wcag2a",
+			"wcag2aa",
+			"wcag21a",
+			"wcag21aa",
+			"wcag22aa"
+		]
+	} },
+	section508: { runOnly: {
+		type: "tag",
+		values: ["section508"]
+	} },
+	"best-practice": { runOnly: {
+		type: "tag",
+		values: ["best-practice"]
+	} },
+	all: {}
+};
+/**
+* Check if an impact level meets or exceeds the threshold
+*/
+function meetsThreshold(impact, threshold) {
+	if (!impact) return false;
+	return IMPACT_SEVERITY[impact] >= IMPACT_SEVERITY[threshold];
+}
+/**
+* Convert axe-core results to our issue format
+*/
+function convertToIssues(results, threshold) {
+	const issues = [];
+	for (const violation of results.violations) {
+		const impact = violation.impact;
+		for (let i = 0; i < violation.nodes.length; i++) {
+			const node = violation.nodes[i];
+			const a11yNode = {
+				selector: node.target.join(", "),
+				html: node.html,
+				xpath: node.xpath?.join(" > "),
+				failureSummary: node.failureSummary
+			};
+			issues.push({
+				id: `${violation.id}-${i}-${Date.now()}`,
+				ruleId: violation.id,
+				impact: impact || "minor",
+				message: node.failureSummary || violation.description,
+				help: violation.help,
+				helpUrl: violation.helpUrl,
+				wcagTags: violation.tags.filter((tag) => tag.startsWith("wcag") || tag.startsWith("section508")),
+				nodes: [a11yNode],
+				meetsThreshold: meetsThreshold(impact, threshold),
+				timestamp: Date.now()
+			});
+		}
+	}
+	return issues;
+}
+/**
+* Create summary statistics from issues array
+* Used when combining axe-core results with custom rule results
+*/
+function createSummary(axeResults, issues) {
+	const summary = {
+		total: issues.length,
+		critical: 0,
+		serious: 0,
+		moderate: 0,
+		minor: 0,
+		passes: axeResults.passes.length,
+		incomplete: axeResults.incomplete.length
+	};
+	for (const issue of issues) {
+		const impact = issue.impact;
+		if (impact === "critical") summary.critical++;
+		else if (impact === "serious") summary.serious++;
+		else if (impact === "moderate") summary.moderate++;
+		else summary.minor++;
+	}
+	return summary;
+}
+/**
+* Get the context description for logging
+*/
+function getContextDescription(context) {
+	if (typeof context === "string") return context;
+	if (context instanceof Document) return "document";
+	if (context instanceof Element) return context.tagName.toLowerCase() + (context.id ? `#${context.id}` : "");
+	return "unknown";
+}
+/**
+* Default selectors to exclude from auditing (devtools panels, overlays, etc.)
+*/
+var DEFAULT_EXCLUDE_SELECTORS = [
+	"[data-testid=\"tanstack_devtools\"]",
+	"[data-a11y-overlay]",
+	"[data-devtools]",
+	"[data-devtools-panel]"
+];
+/**
+* Run an accessibility audit using axe-core
+*/
+async function runAudit(options = {}) {
+	const { threshold = "serious", context = document, ruleSet = "wcag21aa", enabledRules, disabledRules, exclude = [], customRules = {} } = options;
+	const allExclusions = [...DEFAULT_EXCLUDE_SELECTORS, ...exclude];
+	const startTime = performance.now();
+	const contextDescription = getContextDescription(context);
+	try {
+		const axeOptions = {
+			resultTypes: [
+				"violations",
+				"passes",
+				"incomplete"
+			],
+			...RULE_SET_CONFIGS[ruleSet]
+		};
+		if (enabledRules && enabledRules.length > 0) axeOptions.runOnly = {
+			type: "rule",
+			values: enabledRules
+		};
+		if (disabledRules && disabledRules.length > 0) {
+			const rules = {};
+			for (const ruleId of disabledRules) rules[ruleId] = { enabled: false };
+			axeOptions.rules = rules;
+		}
+		let auditContext = context;
+		if (allExclusions.length > 0) auditContext = {
+			include: [auditContext],
+			exclude: allExclusions.map((sel) => [sel])
+		};
+		const results = await axe.run(auditContext, axeOptions);
+		const axeIssues = convertToIssues(results, threshold);
+		const customRulesConfig = {
+			clickHandlerOnNonInteractive: customRules.clickHandlerOnNonInteractive !== false && !disabledRules?.includes("click-handler-on-non-interactive"),
+			mouseOnlyEventHandlers: customRules.mouseOnlyEventHandlers !== false && !disabledRules?.includes("mouse-only-event-handlers"),
+			staticElementInteraction: customRules.staticElementInteraction !== false && !disabledRules?.includes("static-element-interaction")
+		};
+		const customIssues = runCustomRules(typeof context === "string" ? document.querySelector(context) || document : context, customRulesConfig, threshold);
+		const allIssues = [...axeIssues, ...customIssues];
+		const duration = performance.now() - startTime;
+		return {
+			issues: allIssues,
+			summary: createSummary(results, allIssues),
+			timestamp: Date.now(),
+			url: typeof window !== "undefined" ? window.location.href : "",
+			context: contextDescription,
+			duration
+		};
+	} catch (error) {
+		const duration = performance.now() - startTime;
+		console.error("[A11y Audit] Error running axe-core:", error);
+		return {
+			issues: [],
+			summary: {
+				total: 0,
+				critical: 0,
+				serious: 0,
+				moderate: 0,
+				minor: 0,
+				passes: 0,
+				incomplete: 0
+			},
+			timestamp: Date.now(),
+			url: typeof window !== "undefined" ? window.location.href : "",
+			context: contextDescription,
+			duration
+		};
+	}
+}
+/**
+* Get a list of all available axe-core rules plus custom rules
+*/
+function getAvailableRules() {
+	const axeRules = axe.getRules().map((rule) => ({
+		id: rule.ruleId,
+		description: rule.description,
+		tags: rule.tags
+	}));
+	const customRules = getCustomRules();
+	return [...axeRules, ...customRules];
+}
+var IMPACTS = [
+	"critical",
+	"serious",
+	"moderate",
+	"minor"
+];
+var filterIssuesAboveThreshold = (issues, threshold) => issues.filter((issue) => SEVERITY_ORDER[issue.impact] >= SEVERITY_ORDER[threshold]);
+//#endregion
+export { IMPACTS, filterIssuesAboveThreshold, getAvailableRules, meetsThreshold, runAudit };
+
+//# sourceMappingURL=ally-audit.utils.js.map

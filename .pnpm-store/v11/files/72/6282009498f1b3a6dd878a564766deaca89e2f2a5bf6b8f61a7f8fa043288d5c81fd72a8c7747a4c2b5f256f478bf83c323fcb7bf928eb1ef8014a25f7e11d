@@ -1,0 +1,324 @@
+import { isTypescriptObject, toArray, get, set, isPropertyKey, ORPC_NAME, resolveMaybeOptionalOptions, getOwn, isAsyncIteratorObject } from '@orpc/shared';
+import { P as ProcedureContract, r as resolveMetaPlugins, m as mergeErrorMap, a as augmentContractRouter, V as ValidationError } from './shared/contract.g7AqmB1o.mjs';
+export { d as defineMeta, g as getContractRouter, b as getProcedureContractOrThrow, g as getRouterContract, c as minifyContractRouter, c as minifyRouterContract, e as reconcileORPCError } from './shared/contract.g7AqmB1o.mjs';
+import { createORPCClient, ORPCError, wrapAsyncIteratorPreservingEventMeta } from '@orpc/client';
+
+const HIDDEN_META_PLUGINS_SYMBOL = Symbol.for("ORPC_HIDDEN_META_PLUGINS");
+function getHiddenMetaPlugins(container) {
+  if (!isTypescriptObject(container)) {
+    return void 0;
+  }
+  return container[HIDDEN_META_PLUGINS_SYMBOL];
+}
+function setHiddenMetaPlugins(container, metaPlugins) {
+  container[HIDDEN_META_PLUGINS_SYMBOL] = metaPlugins;
+}
+
+class ContractBuilder extends ProcedureContract {
+  /**
+   * Private constructor to prevent direct instantiation.
+   * Use the static `create` method to initialize a new instance with a safe initial definition.
+   */
+  constructor(definition) {
+    super(definition);
+  }
+  /**
+   * Creates a fresh contract builder with an empty definition.
+   * Prefer the exported `oc` instance over calling this directly.
+   *
+   * @see {@link https://orpc.dev/docs/contract/procedure | Procedure Contract}
+   */
+  static create() {
+    return new ContractBuilder({
+      errorMap: {},
+      meta: {}
+    });
+  }
+  /**
+   * Applies metadata plugins to contracts built from this builder.
+   *
+   * @see {@link https://orpc.dev/docs/contract/procedure#metadata | Procedure Contract - Metadata}
+   */
+  meta(...plugins) {
+    const [meta, metaPlugins] = resolveMetaPlugins(
+      this["~orpc"].meta,
+      this["~orpc"].metaPlugins,
+      plugins
+    );
+    return new ContractBuilder({
+      ...this["~orpc"],
+      meta,
+      metaPlugins
+    });
+  }
+  /**
+   * Defines typesafe errors that implementations of this contract can throw.
+   *
+   * @see {@link https://orpc.dev/docs/contract/procedure#typesafe-errors | Procedure Contract - Typesafe Errors}
+   */
+  errors(errors) {
+    let result = new ContractBuilder({
+      ...this["~orpc"],
+      errorMap: mergeErrorMap(this["~orpc"].errorMap, errors)
+    });
+    const plugins = getHiddenMetaPlugins(errors);
+    if (plugins) {
+      result = result.meta(...plugins);
+    }
+    return result;
+  }
+  /**
+   * Defines the input schema used to validate and type the procedure input.
+   *
+   * @see {@link https://orpc.dev/docs/contract/procedure#inputoutput-validation | Procedure Contract - Input/Output Validation}
+   */
+  input(schema) {
+    let result = new ContractBuilder({
+      ...this["~orpc"],
+      inputSchemas: [...toArray(this["~orpc"].inputSchemas), schema]
+    });
+    const plugins = getHiddenMetaPlugins(schema);
+    if (plugins) {
+      result = result.meta(...plugins);
+    }
+    return result;
+  }
+  /**
+   * Defines the output schema used to validate and type the procedure output.
+   *
+   * @see {@link https://orpc.dev/docs/contract/procedure#inputoutput-validation | Procedure Contract - Input/Output Validation}
+   */
+  output(schema) {
+    let result = new ContractBuilder({
+      ...this["~orpc"],
+      outputSchemas: [...toArray(this["~orpc"].outputSchemas), schema]
+    });
+    const plugins = getHiddenMetaPlugins(schema);
+    if (plugins) {
+      result = result.meta(...plugins);
+    }
+    return result;
+  }
+  /**
+   * Applies the builder's errors and metadata to every procedure contract in
+   * the given router contract.
+   *
+   * @see {@link https://orpc.dev/docs/contract/router#extending-router | Router Contract - Extending Router}
+   */
+  router(router) {
+    return augmentContractRouter(router, this["~orpc"]);
+  }
+}
+const oc = ContractBuilder.create();
+
+const meta = {
+  path(path) {
+    return {
+      name: "~path",
+      init(meta2) {
+        return {
+          ...meta2,
+          "~path": path
+        };
+      }
+    };
+  }
+};
+function getPathMeta(procedureOrLazy) {
+  return procedureOrLazy["~orpc"].meta["~path"];
+}
+function resolveBasePathMeta(contract, currentPath = []) {
+  if (contract instanceof ProcedureContract) {
+    const path = getPathMeta(contract);
+    if (!path) {
+      return void 0;
+    }
+    const base = path.slice(0, Math.max(0, path.length - currentPath.length));
+    if (currentPath.some((key, i) => path[base.length + i] !== key)) {
+      throw new TypeError(
+        `Procedure contract at "${currentPath.join(".")}" defines meta.path "${path.join(".")}" that does not match its path inside the given router contract.`
+      );
+    }
+    return base;
+  }
+  if (isTypescriptObject(contract)) {
+    for (const [key, child] of Object.entries(contract)) {
+      const base = resolveBasePathMeta(child, [...currentPath, key]);
+      if (base !== void 0) {
+        return base;
+      }
+    }
+  }
+  return void 0;
+}
+
+function createContractClientFactory(link, options = {}) {
+  const factory = (contract) => {
+    const path = resolveBasePathMeta(contract);
+    if (path === void 0) {
+      throw new TypeError(
+        "ContractClientFactory: procedure contract must define `meta.path` that matches its path in the root router contract."
+      );
+    }
+    const contractRef = options.contractRef;
+    if (contractRef) {
+      const register = (contract2, path2) => {
+        if (contract2 instanceof ProcedureContract) {
+          set(contractRef, [...path2, "~orpc"], contract2["~orpc"]);
+          return;
+        }
+        if (isTypescriptObject(contract2)) {
+          for (const [key, value] of Object.entries(contract2)) {
+            register(value, [...path2, key]);
+          }
+        }
+      };
+      register(contract, path);
+    }
+    return createORPCClient(link, { ...options, scoped: get(options.scoped, path), path });
+  };
+  return factory;
+}
+
+function type(...[map]) {
+  return {
+    "~standard": {
+      vendor: ORPC_NAME,
+      version: 1,
+      async validate(value) {
+        if (map) {
+          return { value: await map(value) };
+        }
+        return { value };
+      }
+    }
+  };
+}
+function isSchemaIssue(issue) {
+  if (!isTypescriptObject(issue) || typeof issue.message !== "string") {
+    return false;
+  }
+  if (issue.path !== void 0) {
+    if (!Array.isArray(issue.path)) {
+      return false;
+    }
+    if (!issue.path.every((segment) => isPropertyKey(segment) || isTypescriptObject(segment) && isPropertyKey(segment.key))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function error(code, { data: dataSchema, message } = {}) {
+  const validateData = (schema, value) => {
+    const result = schema["~standard"].validate(value);
+    if (result instanceof Promise) {
+      throw new TypeError(
+        `Error factory "${code}" does not support async data schemas.`
+      );
+    }
+    return result;
+  };
+  return class extends ORPCError {
+    static code = code;
+    static data = dataSchema ?? type();
+    static message = message;
+    constructor(...rest) {
+      const options = resolveMaybeOptionalOptions(rest);
+      let data = options.data;
+      if (dataSchema) {
+        const result = validateData(dataSchema, options.data);
+        if (result.issues) {
+          throw new ValidationError({
+            message: `Error factory "${code}" data validation failed`,
+            issues: result.issues,
+            invalidData: options.data
+          });
+        }
+        data = result.value;
+      }
+      super(code, { message, ...options, data });
+    }
+    static [Symbol.hasInstance](instance) {
+      if (!(instance instanceof ORPCError)) {
+        return false;
+      }
+      if (instance.code !== code) {
+        return false;
+      }
+      if (dataSchema && validateData(dataSchema, instance.data).issues) {
+        return false;
+      }
+      return true;
+    }
+  };
+}
+function createORPCErrorConstructorMap(errorMap) {
+  const proxy = new Proxy(errorMap, {
+    get(target, code) {
+      if (typeof code !== "string") {
+        return Reflect.get(target, code);
+      }
+      const item = (...rest) => {
+        const options = resolveMaybeOptionalOptions(rest);
+        const config = getOwn(errorMap, code);
+        const error2 = new ORPCError(code, {
+          message: options.message ?? config?.message,
+          data: options.data,
+          cause: options.cause
+        });
+        if (config) {
+          error2.defined = true;
+        }
+        return error2;
+      };
+      return item;
+    }
+  });
+  return proxy;
+}
+
+const ASYNC_ITERATOR_OBJECT_SCHEMA_DETAILS_SYMBOL = Symbol.for("ORPC_ASYNC_ITERATOR_OBJECT_SCHEMA_DETAILS");
+function asyncIteratorObject(yieldSchema, returnSchema) {
+  return {
+    "~standard": {
+      [ASYNC_ITERATOR_OBJECT_SCHEMA_DETAILS_SYMBOL]: { yieldSchema, returnSchema },
+      vendor: ORPC_NAME,
+      version: 1,
+      validate(iterator) {
+        if (!isAsyncIteratorObject(iterator)) {
+          return { issues: [{ message: "Expect AsyncIteratorObject", path: [] }] };
+        }
+        const mapped = wrapAsyncIteratorPreservingEventMeta(iterator, {
+          async mapResult(result) {
+            const schema = result.done ? returnSchema : yieldSchema;
+            if (!schema) {
+              return result;
+            }
+            const validated = await schema["~standard"].validate(result.value);
+            if (validated.issues) {
+              throw new ORPCError("ASYNC_ITERATOR_OBJECT_VALIDATION_FAILED", {
+                message: "AsyncIteratorObject validation failed",
+                cause: new ValidationError({
+                  issues: validated.issues,
+                  message: "AsyncIteratorObject validation failed",
+                  invalidData: result.value
+                })
+              });
+            }
+            return { done: result.done, value: validated.value };
+          }
+        });
+        return { value: mapped };
+      }
+    }
+  };
+}
+function getAsyncIteratorObjectSchemaDetails(schema) {
+  if (schema === void 0) {
+    return void 0;
+  }
+  return schema["~standard"][ASYNC_ITERATOR_OBJECT_SCHEMA_DETAILS_SYMBOL];
+}
+
+export { ContractBuilder, HIDDEN_META_PLUGINS_SYMBOL, ProcedureContract, ValidationError, asyncIteratorObject, augmentContractRouter, createContractClientFactory, createORPCErrorConstructorMap, error, asyncIteratorObject as eventIterator, getAsyncIteratorObjectSchemaDetails, getHiddenMetaPlugins, getPathMeta, isSchemaIssue, mergeErrorMap, meta, oc, resolveBasePathMeta, resolveMetaPlugins, setHiddenMetaPlugins, type };

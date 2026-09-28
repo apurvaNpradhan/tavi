@@ -1,0 +1,24 @@
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+export interface DevtoolsPanelProps extends TanStackDevtoolsPluginProps {
+}
+/**
+ * Creates a React component that dynamically imports and mounts a devtools panel. SSR friendly.
+ * @param devtoolsPackageName The name of the devtools package to be imported, e.g., '@tanstack/devtools-react'
+ * @param importName The name of the export to be imported from the devtools package (e.g., 'default' or 'DevtoolsCore')
+ * @returns A React component that mounts the devtools
+ * @example
+ * ```tsx
+ * // if the export is default
+ * const [ReactDevtoolsPanel, NoOpReactDevtoolsPanel] = createReactPanel('@tanstack/devtools-react')
+ * ```
+ *
+ * @example
+ * ```tsx
+ * // if the export is named differently
+ * const [ReactDevtoolsPanel, NoOpReactDevtoolsPanel] = createReactPanel('@tanstack/devtools-react', 'DevtoolsCore')
+ * ```
+ */
+export declare function createReactPanel<TComponentProps extends TanStackDevtoolsPluginProps, TCoreDevtoolsClass extends {
+    mount: (el: HTMLElement, props: TanStackDevtoolsPluginProps) => void;
+    unmount: () => void;
+}>(CoreClass: new () => TCoreDevtoolsClass): readonly [(props: TComponentProps) => import("react/jsx-runtime").JSX.Element, (_props: TComponentProps) => import("react/jsx-runtime").JSX.Element];

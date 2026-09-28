@@ -1,0 +1,748 @@
+import { AsyncIteratorClass, isTypescriptObject, isAsyncIteratorObject, Queue, SequentialIdGenerator, hasAnyDefinedValue, AbortError, stringifyJSON } from '@standard-server/shared';
+import { withEventMeta, ErrorEvent, unwrapEvent, generateContentDisposition, flattenStandardHeader, getFilenameFromContentDisposition, isStandardMethod, isStandardHeaders, isStandardUrl, isStandardStatus } from '@standard-server/core';
+
+function toAsyncIteratorObject(queue, cleanup) {
+  return new AsyncIteratorClass(async () => {
+    while (true) {
+      const { json } = await queue.pull();
+      switch (json.event) {
+        case void 0:
+        case "message": {
+          let data = json.data;
+          if (isTypescriptObject(data)) {
+            data = withEventMeta(data, json);
+          }
+          return { value: data, done: false };
+        }
+        case "error": {
+          throw withEventMeta(
+            new ErrorEvent(json.data),
+            json
+          );
+        }
+        case "close": {
+          let data = json.data;
+          if (isTypescriptObject(data)) {
+            data = withEventMeta(data, json);
+          }
+          return { value: data, done: true };
+        }
+      }
+    }
+  }, cleanup);
+}
+class EventStreamTransmitter {
+  constructor(iterator, messageId, send) {
+    this.iterator = iterator;
+    this.messageId = messageId;
+    this.send = send;
+  }
+  isDone = false;
+  async cancel() {
+    if (!this.isDone) {
+      this.isDone = true;
+      await this.iterator.return?.();
+    }
+  }
+  async transmit() {
+    while (true) {
+      try {
+        const item = await this.iterator.next();
+        if (this.isDone) {
+          return;
+        }
+        if (item.done) {
+          this.isDone = true;
+        }
+        try {
+          const [data, meta] = unwrapEvent(item.value);
+          await this.send({
+            kind: "event-stream",
+            id: this.messageId,
+            json: { ...meta, event: item.done ? "close" : void 0, data }
+          });
+        } catch (error) {
+          await this.cancel();
+          throw error;
+        }
+        if (this.isDone) {
+          return;
+        }
+      } catch (error) {
+        if (error instanceof ErrorEvent) {
+          if (!this.isDone) {
+            this.isDone = true;
+            const [resolvedError, meta] = unwrapEvent(error);
+            await this.send({
+              kind: "event-stream",
+              id: this.messageId,
+              json: { ...meta, event: "error", data: resolvedError.data }
+            });
+          }
+          return;
+        }
+        this.isDone = true;
+        throw error;
+      }
+    }
+  }
+}
+
+function toOctetStream(queue, cleanup) {
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const { json, binary } = await queue.pull();
+        if (binary) {
+          controller.enqueue(binary instanceof Uint8Array ? binary : new Uint8Array(await binary.arrayBuffer()));
+        }
+        if (json.close) {
+          await cleanup({ kind: "success" });
+          controller.close();
+        }
+      } catch (error) {
+        await cleanup({ kind: "error", error });
+        controller.error(error);
+      }
+    },
+    async cancel(error) {
+      await cleanup({ kind: "cancelled", error });
+    }
+  });
+}
+class OctetStreamTransmitter {
+  constructor(stream, messageId, send) {
+    this.messageId = messageId;
+    this.send = send;
+    this.reader = stream.getReader();
+  }
+  isDone = false;
+  reader;
+  async cancel() {
+    if (!this.isDone) {
+      this.isDone = true;
+      await this.reader.cancel();
+    }
+  }
+  async transmit() {
+    while (true) {
+      try {
+        const item = await this.reader.read();
+        if (this.isDone) {
+          return;
+        }
+        if (item.done) {
+          this.isDone = true;
+        }
+        try {
+          await this.send({
+            json: { close: item.done ? true : void 0 },
+            binary: item.value,
+            kind: "octet-stream",
+            id: this.messageId
+          });
+        } catch (err) {
+          await this.cancel();
+          throw err;
+        }
+        if (this.isDone) {
+          return;
+        }
+      } catch (error) {
+        this.isDone = true;
+        throw error;
+      }
+    }
+  }
+}
+
+function toStandardBody(message, cleanup) {
+  const contentType = flattenStandardHeader(message.json.headers?.["content-type"]);
+  const bodyHint = flattenStandardHeader(message.json.headers?.["standard-server"]);
+  if (message.json.body === void 0 && message.binary === void 0) {
+    if (contentType === void 0 && bodyHint === "event-stream") {
+      const eventStreamMessageQueue = new Queue();
+      return {
+        resolveBody: async () => toAsyncIteratorObject(eventStreamMessageQueue, cleanup),
+        eventStreamMessageQueue
+      };
+    }
+    if (contentType !== void 0) {
+      const octetStreamMessageQueue = new Queue();
+      return {
+        resolveBody: async () => toOctetStream(octetStreamMessageQueue, cleanup),
+        octetStreamMessageQueue
+      };
+    }
+  }
+  const resolveBody = async () => {
+    let errorRef;
+    try {
+      if (message.binary) {
+        if (bodyHint === "form-data") {
+          const headers = {};
+          if (contentType !== void 0) {
+            headers["content-type"] = contentType;
+          }
+          const res = new Response(message.binary, {
+            headers
+          });
+          const form = await res.formData();
+          return form;
+        }
+        const contentDisposition = flattenStandardHeader(message.json.headers?.["content-disposition"]);
+        const filename = contentDisposition !== void 0 ? getFilenameFromContentDisposition(contentDisposition) : void 0;
+        const file = new File([message.binary], filename ?? "blob", {
+          type: contentType ?? "application/octet-stream"
+        });
+        return file;
+      }
+      if (bodyHint === "url-search-params") {
+        if (typeof message.json.body !== "string") {
+          throw new TypeError("Expected body to be a string for url-search-params bodyHint");
+        }
+        return new URLSearchParams(message.json.body);
+      }
+      return message.json.body;
+    } catch (error) {
+      errorRef = { value: error };
+      throw error;
+    } finally {
+      await cleanup(errorRef ? { kind: "error", error: errorRef.value } : { kind: "success" });
+    }
+  };
+  return { resolveBody };
+}
+async function encodeAtomicStandardBody(body, headers) {
+  headers = { ...headers };
+  if (body instanceof ReadableStream) {
+    headers["content-type"] ??= "application/octet-stream";
+    return { jsonBody: void 0, headers, binary: void 0 };
+  }
+  if (body instanceof Blob) {
+    headers["content-type"] = body.type;
+    headers["content-disposition"] ??= generateContentDisposition(
+      body instanceof File ? body.name ?? "" : "blob"
+    );
+    if (Number.isFinite(body.size)) {
+      headers["content-length"] = body.size.toString();
+    }
+    return { jsonBody: void 0, headers, binary: body };
+  }
+  headers["standard-server"] = void 0;
+  headers["content-type"] = void 0;
+  if (isAsyncIteratorObject(body)) {
+    headers["standard-server"] = "event-stream";
+    return { jsonBody: void 0, headers, binary: void 0 };
+  }
+  if (body instanceof FormData) {
+    const res = new Response(body);
+    const blob = await res.blob();
+    headers["standard-server"] = "form-data";
+    headers["content-type"] = blob.type;
+    headers["content-length"] = blob.size.toString();
+    return { jsonBody: void 0, headers, binary: blob };
+  }
+  if (body instanceof URLSearchParams) {
+    headers["standard-server"] = "url-search-params";
+    return { jsonBody: body.toString(), headers, binary: void 0 };
+  }
+  return { jsonBody: body, headers, binary: void 0 };
+}
+
+class ClientPeer {
+  constructor(send) {
+    this.send = send;
+  }
+  idGenerator = new SequentialIdGenerator();
+  requests = /* @__PURE__ */ new Map();
+  /**
+   * Send a request to the server peer
+   */
+  request(request) {
+    return new Promise((resolve, reject) => {
+      const signal = request.signal;
+      signal?.throwIfAborted();
+      const id = this.idGenerator.generate();
+      const state = { resolve, reject };
+      this.requests.set(id, state);
+      if (signal) {
+        const abortListener = () => {
+          void this.abortById(id, signal.reason).catch(() => {
+          });
+        };
+        signal.addEventListener("abort", abortListener);
+        state.removeAbortListener = () => signal.removeEventListener("abort", abortListener);
+      }
+      void this.transmitRequest(id, state, request);
+    });
+  }
+  async transmitRequest(id, state, request) {
+    try {
+      const encodedAtomicBody = await encodeAtomicStandardBody(request.body, request.headers);
+      request.signal?.throwIfAborted();
+      if (this.requests.get(id) !== state) {
+        return;
+      }
+      await this.send({
+        id,
+        kind: "request",
+        json: {
+          method: request.method === "POST" ? void 0 : request.method,
+          url: request.url,
+          headers: hasAnyDefinedValue(encodedAtomicBody.headers) ? encodedAtomicBody.headers : void 0,
+          body: encodedAtomicBody.jsonBody
+        },
+        binary: encodedAtomicBody.binary
+      });
+      if (isAsyncIteratorObject(request.body)) {
+        const transmitter = new EventStreamTransmitter(request.body, id, this.send);
+        if (this.requests.get(id) !== state) {
+          await transmitter.cancel();
+        } else {
+          state.eventStreamTransmitter = transmitter;
+          await transmitter.transmit().catch((error) => {
+            if (state.eventStreamTransmitter) {
+              return this.abortById(id, error);
+            }
+          });
+        }
+      } else if (request.body instanceof ReadableStream) {
+        const transmitter = new OctetStreamTransmitter(request.body, id, this.send);
+        if (this.requests.get(id) !== state) {
+          await transmitter.cancel();
+        } else {
+          state.octetStreamTransmitter = transmitter;
+          await transmitter.transmit().catch((error) => {
+            if (state.octetStreamTransmitter) {
+              return this.abortById(id, error);
+            }
+          });
+        }
+      }
+    } catch (reason) {
+      await this.closeById(id, reason);
+    }
+  }
+  /**
+   * Handle a message from server
+   */
+  async message(message) {
+    const id = message.id;
+    const state = this.requests.get(id);
+    if (!state) {
+      return;
+    }
+    if (message.kind === "stream/cancel") {
+      const promise = Promise.all([
+        state.eventStreamTransmitter?.cancel(),
+        state.octetStreamTransmitter?.cancel()
+      ]);
+      state.eventStreamTransmitter = void 0;
+      state.octetStreamTransmitter = void 0;
+      await promise;
+      return;
+    }
+    if (message.kind === "cancel") {
+      await this.closeById(id, new AbortError("Server canceled the request"));
+      return;
+    }
+    if (message.kind === "event-stream") {
+      state.eventStreamMessageQueue?.push(message);
+      return;
+    }
+    if (message.kind === "octet-stream") {
+      state.octetStreamMessageQueue?.push(message);
+      return;
+    }
+    if (!state.resolve) {
+      return;
+    }
+    const resolve = state.resolve;
+    state.resolve = void 0;
+    try {
+      const decoded = toStandardBody(message, async (cleanupState) => {
+        if (cleanupState.kind === "cancelled") {
+          await this.abortById(id, cleanupState.error);
+        } else if (state.eventStreamMessageQueue || state.octetStreamMessageQueue) {
+          await this.closeById(id, cleanupState.error);
+        }
+      });
+      state.eventStreamMessageQueue = decoded.eventStreamMessageQueue;
+      state.octetStreamMessageQueue = decoded.octetStreamMessageQueue;
+      resolve({
+        headers: message.json.headers ?? {},
+        status: message.json.status ?? 200,
+        resolveBody: decoded.resolveBody
+      });
+      state.reject = void 0;
+      if (!state.eventStreamMessageQueue && !state.octetStreamMessageQueue) {
+        await this.closeById(id);
+      }
+    } catch (reason) {
+      await this.closeById(id, reason);
+    }
+  }
+  async close(reason) {
+    reason ??= new AbortError("Peer was closed");
+    await Promise.all(
+      Array.from(this.requests.keys()).map((id) => this.closeById(id, reason))
+    );
+  }
+  async closeById(id, reason) {
+    const state = this.requests.get(id);
+    if (!state) {
+      return;
+    }
+    this.requests.delete(id);
+    if (state.reject || state.eventStreamMessageQueue || state.octetStreamMessageQueue) {
+      reason ??= new AbortError("Request was closed");
+    }
+    state.reject?.(reason);
+    state.resolve = void 0;
+    state.reject = void 0;
+    state.eventStreamMessageQueue?.close(reason);
+    state.octetStreamMessageQueue?.close(reason);
+    state.eventStreamMessageQueue = void 0;
+    state.octetStreamMessageQueue = void 0;
+    const promises = [
+      state.eventStreamTransmitter?.cancel(),
+      state.octetStreamTransmitter?.cancel()
+    ];
+    state.eventStreamTransmitter = void 0;
+    state.octetStreamTransmitter = void 0;
+    state.removeAbortListener?.();
+    state.removeAbortListener = void 0;
+    await Promise.all(promises);
+  }
+  async abortById(id, reason) {
+    const state = this.requests.get(id);
+    if (!state) {
+      return;
+    }
+    this.requests.delete(id);
+    reason ??= new AbortError("Request was aborted");
+    state.reject?.(reason);
+    state.resolve = void 0;
+    state.reject = void 0;
+    state.eventStreamMessageQueue?.abort(reason);
+    state.octetStreamMessageQueue?.abort(reason);
+    state.eventStreamMessageQueue = void 0;
+    state.octetStreamMessageQueue = void 0;
+    const promises = [
+      this.send({ id, kind: "cancel" }),
+      state.eventStreamTransmitter?.cancel(),
+      state.octetStreamTransmitter?.cancel()
+    ];
+    state.eventStreamTransmitter = void 0;
+    state.octetStreamTransmitter = void 0;
+    state.removeAbortListener?.();
+    state.removeAbortListener = void 0;
+    await Promise.all(promises);
+  }
+}
+
+function isPeerMessage(maybe) {
+  if (!isTypescriptObject(maybe)) {
+    return false;
+  }
+  if (typeof maybe.id !== "string") {
+    return false;
+  }
+  if (typeof maybe.kind !== "string") {
+    return false;
+  }
+  if (maybe.binary !== void 0 && !(maybe.binary instanceof Uint8Array) && !(maybe.binary instanceof Blob)) {
+    return false;
+  }
+  return true;
+}
+function isPeerRequestMessage(maybe) {
+  if (maybe.kind !== "request") {
+    return false;
+  }
+  if (!isTypescriptObject(maybe.json)) {
+    return false;
+  }
+  if (maybe.json.method !== void 0 && !isStandardMethod(maybe.json.method)) {
+    return false;
+  }
+  if (maybe.json.headers !== void 0 && !isStandardHeaders(maybe.json.headers)) {
+    return false;
+  }
+  return isStandardUrl(maybe.json.url);
+}
+function isPeerResponseMessage(maybe) {
+  if (maybe.kind !== "response") {
+    return false;
+  }
+  if (!isTypescriptObject(maybe.json)) {
+    return false;
+  }
+  if (maybe.json.status !== void 0 && !isStandardStatus(maybe.json.status)) {
+    return false;
+  }
+  if (maybe.json.headers !== void 0 && !isStandardHeaders(maybe.json.headers)) {
+    return false;
+  }
+  return true;
+}
+function isPeerCancelMessage(maybe) {
+  return maybe.kind === "cancel" && maybe.json === void 0 && maybe.binary === void 0;
+}
+function isPeerEventStreamMessage(maybe) {
+  if (maybe.kind !== "event-stream" || maybe.binary !== void 0) {
+    return false;
+  }
+  if (!isTypescriptObject(maybe.json)) {
+    return false;
+  }
+  if (maybe.json.id !== void 0 && typeof maybe.json.id !== "string") {
+    return false;
+  }
+  if (maybe.json.event !== void 0 && maybe.json.event !== "message" && maybe.json.event !== "error" && maybe.json.event !== "close") {
+    return false;
+  }
+  if (maybe.json.retry !== void 0 && !Number.isFinite(maybe.json.retry)) {
+    return false;
+  }
+  if (maybe.json.comments !== void 0 && !(Array.isArray(maybe.json.comments) && maybe.json.comments.every((v) => typeof v === "string"))) {
+    return false;
+  }
+  return true;
+}
+function isPeerOctetStreamMessage(maybe) {
+  return maybe.kind === "octet-stream" && isTypescriptObject(maybe.json) && (typeof maybe.json.close === "undefined" || typeof maybe.json.close === "boolean");
+}
+function isPeerStreamCancelMessage(maybe) {
+  return maybe.kind === "stream/cancel" && maybe.json === void 0 && maybe.binary === void 0;
+}
+function isClientPeerSendMessage(maybe) {
+  return isPeerRequestMessage(maybe) || isPeerCancelMessage(maybe) || isPeerEventStreamMessage(maybe) || isPeerOctetStreamMessage(maybe);
+}
+function isServerPeerSendMessage(maybe) {
+  return isPeerResponseMessage(maybe) || isPeerCancelMessage(maybe) || isPeerEventStreamMessage(maybe) || isPeerOctetStreamMessage(maybe) || isPeerStreamCancelMessage(maybe);
+}
+
+const JSON_BINARY_DELIMITER = 255;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+async function encodePeerMessage(message, options = {}) {
+  if (message.binary === void 0) {
+    const jsonPart2 = stringifyJSON(message);
+    return options.prefix ? options.prefix + jsonPart2 : jsonPart2;
+  }
+  const jsonPart = stringifyJSON({ ...message, binary: void 0 });
+  const textBytes = textEncoder.encode(
+    options.prefix ? options.prefix + jsonPart : jsonPart
+  );
+  const binaryBytes = message.binary instanceof Blob ? new Uint8Array(await message.binary.arrayBuffer()) : message.binary;
+  const output = new Uint8Array(
+    textBytes.length + 1 + binaryBytes.length
+  );
+  output.set(textBytes, 0);
+  output[textBytes.length] = JSON_BINARY_DELIMITER;
+  output.set(binaryBytes, textBytes.length + 1);
+  return output;
+}
+function decodePeerMessage(encoded, options = {}) {
+  try {
+    if (typeof encoded === "string") {
+      if (options.prefix) {
+        if (!encoded.startsWith(options.prefix)) {
+          return { matched: false };
+        }
+        encoded = encoded.slice(options.prefix.length);
+      }
+      const message2 = JSON.parse(encoded);
+      if (!isPeerMessage(message2)) {
+        return { matched: false };
+      }
+      return { matched: true, message: message2 };
+    }
+    if (options.prefix) {
+      const prefixBytes = textEncoder.encode(options.prefix);
+      for (let i = 0; i < prefixBytes.length; i++) {
+        if (encoded[i] !== prefixBytes[i]) {
+          return { matched: false };
+        }
+      }
+      encoded = encoded.subarray(prefixBytes.length);
+    }
+    const separatorIndex = encoded.indexOf(JSON_BINARY_DELIMITER);
+    if (separatorIndex === -1) {
+      const message2 = JSON.parse(textDecoder.decode(encoded));
+      if (!isPeerMessage(message2)) {
+        return { matched: false };
+      }
+      return { matched: true, message: message2 };
+    }
+    const jsonBytes = encoded.subarray(0, separatorIndex);
+    const binaryBytes = encoded.subarray(separatorIndex + 1);
+    const message = JSON.parse(textDecoder.decode(jsonBytes));
+    if (!isPeerMessage(message)) {
+      return { matched: false };
+    }
+    message.binary = binaryBytes;
+    return { matched: true, message };
+  } catch {
+    return { matched: false };
+  }
+}
+
+class HibernationAsyncIteratorClass extends AsyncIteratorClass {
+  /**
+   * Optional because `AsyncIteratorClass` does not define this property.
+   * The client library represents server results as `AsyncIteratorClass` instances.
+   */
+  "~callback";
+  constructor(callback) {
+    super(async () => {
+      throw new Error("Cannot use hibernating iterator directly");
+    }, async () => {
+    });
+    this["~callback"] = callback;
+  }
+}
+
+class ServerPeer {
+  constructor(send) {
+    this.send = send;
+  }
+  requests = /* @__PURE__ */ new Map();
+  /**
+   * Handle a message from client
+   */
+  async message(message, handleRequest) {
+    const id = message.id;
+    if (message.kind === "cancel") {
+      await this.closeById(id, new AbortError("Client aborted the request"));
+      return;
+    }
+    if (message.kind === "event-stream") {
+      this.requests.get(id)?.eventStreamMessageQueue?.push(message);
+      return;
+    }
+    if (message.kind === "octet-stream") {
+      this.requests.get(id)?.octetStreamMessageQueue?.push(message);
+      return;
+    }
+    if (this.requests.has(id)) {
+      return;
+    }
+    const controller = new AbortController();
+    const state = { controller };
+    this.requests.set(id, state);
+    const signal = controller.signal;
+    try {
+      const decoded = toStandardBody(message, async ({ kind }) => {
+        const streamActive = state.eventStreamMessageQueue !== void 0 || state.octetStreamMessageQueue !== void 0;
+        state.eventStreamMessageQueue = void 0;
+        state.octetStreamMessageQueue = void 0;
+        if (kind === "cancelled" && streamActive) {
+          await this.send({ id, kind: "stream/cancel" });
+        }
+      });
+      state.eventStreamMessageQueue = decoded.eventStreamMessageQueue;
+      state.octetStreamMessageQueue = decoded.octetStreamMessageQueue;
+      const response = await handleRequest({
+        url: message.json.url,
+        method: message.json.method ?? "POST",
+        headers: message.json.headers ?? {},
+        resolveBody: decoded.resolveBody,
+        signal
+      });
+      if (signal.aborted) {
+        return;
+      }
+      const encodedAtomicBody = await encodeAtomicStandardBody(response.body, response.headers);
+      if (signal.aborted) {
+        return;
+      }
+      const responseMessage = {
+        id,
+        kind: "response",
+        json: {
+          status: response.status === 200 ? void 0 : response.status,
+          headers: hasAnyDefinedValue(encodedAtomicBody.headers) ? encodedAtomicBody.headers : void 0,
+          body: encodedAtomicBody.jsonBody
+        },
+        binary: encodedAtomicBody.binary
+      };
+      await this.send(responseMessage);
+      if (signal.aborted) {
+        return;
+      }
+      if (isAsyncIteratorObject(response.body)) {
+        if (response.body instanceof HibernationAsyncIteratorClass) {
+          try {
+            await response.body["~callback"]?.(id);
+          } finally {
+            await response.body.return();
+          }
+        } else {
+          const transmitter = new EventStreamTransmitter(response.body, id, this.send);
+          state.eventStreamTransmitter = transmitter;
+          await transmitter.transmit().catch(async (reason) => {
+            if (state.eventStreamTransmitter) {
+              await this.cancelById(id, reason);
+            }
+          });
+        }
+      } else if (response.body instanceof ReadableStream) {
+        const transmitter = new OctetStreamTransmitter(response.body, id, this.send);
+        state.octetStreamTransmitter = transmitter;
+        await transmitter.transmit().catch(async (reason) => {
+          if (state.octetStreamTransmitter) {
+            await this.cancelById(id, reason);
+          }
+        });
+      }
+      state.controller = void 0;
+      await this.closeById(id);
+    } catch (reason) {
+      await this.cancelById(id, reason);
+      throw reason;
+    }
+  }
+  async close(reason) {
+    reason ??= new AbortError("Peer was closed");
+    await Promise.all(
+      Array.from(this.requests.keys()).map((id) => this.closeById(id, reason))
+    );
+  }
+  async closeById(id, reason) {
+    const state = this.requests.get(id);
+    if (!state) {
+      return;
+    }
+    this.requests.delete(id);
+    if (state.controller || state.eventStreamMessageQueue || state.octetStreamMessageQueue) {
+      reason ??= new AbortError("Request was closed");
+    }
+    state.controller?.abort(reason);
+    state.controller = void 0;
+    state.eventStreamMessageQueue?.close(reason);
+    state.octetStreamMessageQueue?.close(reason);
+    state.eventStreamMessageQueue = void 0;
+    state.octetStreamMessageQueue = void 0;
+    const promises = [
+      state.eventStreamTransmitter?.cancel(),
+      state.octetStreamTransmitter?.cancel()
+    ];
+    state.eventStreamTransmitter = void 0;
+    state.octetStreamTransmitter = void 0;
+    await Promise.all(promises);
+  }
+  async cancelById(id, reason) {
+    await Promise.all([
+      /**
+       * Do not need to send cancel message if request was closed or aborted
+       */
+      this.requests.has(id) ? this.send({ id, kind: "cancel" }) : void 0,
+      this.closeById(id, reason)
+    ]);
+  }
+}
+
+export { ClientPeer, EventStreamTransmitter, HibernationAsyncIteratorClass, ServerPeer, decodePeerMessage, encodePeerMessage, isClientPeerSendMessage, isPeerCancelMessage, isPeerEventStreamMessage, isPeerMessage, isPeerOctetStreamMessage, isPeerRequestMessage, isPeerResponseMessage, isPeerStreamCancelMessage, isServerPeerSendMessage, toAsyncIteratorObject };

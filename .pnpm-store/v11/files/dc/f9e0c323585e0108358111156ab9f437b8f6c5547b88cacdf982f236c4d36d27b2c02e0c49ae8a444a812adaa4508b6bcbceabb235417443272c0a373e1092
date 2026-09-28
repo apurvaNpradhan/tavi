@@ -1,0 +1,21 @@
+//#region src/angular/plugin.ts
+function createAngularPlugin({ render, ...config }) {
+	function Plugin(inputs) {
+		return {
+			...config,
+			render,
+			inputs
+		};
+	}
+	function NoOpPlugin() {
+		return {
+			...config,
+			render: null
+		};
+	}
+	return [Plugin, NoOpPlugin];
+}
+//#endregion
+export { createAngularPlugin };
+
+//# sourceMappingURL=plugin.js.map

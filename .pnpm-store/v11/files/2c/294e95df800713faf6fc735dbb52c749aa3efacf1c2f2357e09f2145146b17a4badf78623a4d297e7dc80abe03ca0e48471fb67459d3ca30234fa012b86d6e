@@ -1,0 +1,6 @@
+import { OpenAPIV3_1, OpenAPIV3_0 } from '@openapi-spec/types';
+
+declare function downgradeSchemaV31ToV30<T = unknown>(schema: OpenAPIV3_1.SchemaObject<T>): OpenAPIV3_0.ReferenceObject | OpenAPIV3_0.SchemaObject<T>;
+declare function downgradeSpecV31ToV30(spec: OpenAPIV3_1.OpenAPIObject): OpenAPIV3_0.OpenAPIObject;
+
+export { downgradeSchemaV31ToV30, downgradeSpecV31ToV30 };

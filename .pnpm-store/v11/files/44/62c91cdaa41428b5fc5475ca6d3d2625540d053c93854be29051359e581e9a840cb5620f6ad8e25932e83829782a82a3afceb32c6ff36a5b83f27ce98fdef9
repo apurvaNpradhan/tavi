@@ -1,0 +1,13 @@
+declare const a11yDevtoolsPlugin: (inputs?: import('@tanstack/devtools-utils/angular').DevtoolsPanelProps | (() => import('@tanstack/devtools-utils/angular').DevtoolsPanelProps) | undefined) => {
+    render: import('@tanstack/devtools-utils/angular').TanStackDevtoolsAngularPluginRender<import('@tanstack/devtools-utils/angular').DevtoolsPanelProps>;
+    inputs: import('@tanstack/devtools-utils/angular').DevtoolsPanelProps | (() => import('@tanstack/devtools-utils/angular').DevtoolsPanelProps) | undefined;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}, a11yDevtoolsNoOpPlugin: () => {
+    render: null;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+};
+export { a11yDevtoolsPlugin, a11yDevtoolsNoOpPlugin };

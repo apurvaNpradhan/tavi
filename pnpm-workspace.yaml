@@ -1,0 +1,23 @@
+packages:
+  - packages/**
+  - apps/**
+
+overrides:
+  "@isaacs/brace-expansion": 5.0.1
+  ajv: 8.18.0
+  brace-expansion: ">=5.0.9"
+  esbuild: 0.28.1
+  hono: ">=4.13.5"
+  minimatch: 10.2.3
+  path-to-regexp: ">=8.4.0"
+  picomatch: ">=4.0.4"
+  postcss: ">=8.5.23"
+  valibot: ">=1.4.2"
+
+allowBuilds:
+  "@sentry/cli": true
+  "@sentry/node-cpu-profiler": true
+  esbuild: true
+  # Provides the `lefthook` binary the git hooks run through; without its
+  # postinstall pnpm leaves only a stub and every commit fails.
+  lefthook: true

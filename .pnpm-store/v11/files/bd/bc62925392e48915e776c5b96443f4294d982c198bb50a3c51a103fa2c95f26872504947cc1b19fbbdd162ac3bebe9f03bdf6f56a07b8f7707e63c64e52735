@@ -1,0 +1,45 @@
+{
+  "name": "@orpc/shared",
+  "type": "module",
+  "version": "2.0.0-beta.40",
+  "description": "Internal utilities shared across oRPC packages",
+  "license": "MIT",
+  "funding": [
+    "https://github.com/sponsors/dinwwwh",
+    "https://opencollective.com/middleapi"
+  ],
+  "homepage": "https://orpc.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/middleapi/orpc.git",
+    "directory": "packages/shared"
+  },
+  "keywords": [
+    "orpc"
+  ],
+  "sideEffects": false,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@standard-server/shared": "~0.9.2",
+    "radash": "^12.1.1",
+    "type-fest": "^5.3.1"
+  },
+  "devDependencies": {
+    "arktype": "^2.2.1",
+    "valibot": "^1.5.0",
+    "zod": "^4.5.4"
+  },
+  "scripts": {
+    "type:check": "tsc -b"
+  }
+}

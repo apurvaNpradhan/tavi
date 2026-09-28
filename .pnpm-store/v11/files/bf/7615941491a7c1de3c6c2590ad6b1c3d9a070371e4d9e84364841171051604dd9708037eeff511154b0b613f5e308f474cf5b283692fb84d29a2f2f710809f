@@ -1,0 +1,457 @@
+import { Arrayable, Promisable } from 'type-fest';
+export { Arrayable, IsEqual, PartialDeep, Promisable, Writable } from 'type-fest';
+import { AsyncIteratorClass } from '@standard-server/shared';
+export { AbortError, AsyncCleanupFn, AsyncIteratorClass, AsyncIteratorClassNextFn, SequentialIdGenerator, getOrBind, isAsyncIteratorObject, isTypescriptObject, parseEmptyableJSON, safeDecodeURIComponent, safeEncodeURIComponent, sequential, sleep, stringifyJSON, toArray } from '@standard-server/shared';
+
+type MaybeOptionalOptions<TOptions> = object extends TOptions ? [options?: TOptions] : [options: TOptions];
+declare function resolveMaybeOptionalOptions<T>(rest: MaybeOptionalOptions<T>): T;
+
+declare function splitInHalf<T>(arr: readonly T[]): [T[], T[]];
+
+/**
+ * Load Request/Response/Blob/File/.. to a buffer (Uint8Array<ArrayBuffer>).
+ *
+ * Prefers the newer `.bytes` method when available as it more efficient but not widely supported yet.
+ */
+declare function loadBytes(source: Pick<Blob, 'arrayBuffer' | 'bytes'>): ReturnType<Blob['bytes']>;
+/**
+ * Normalize text or binary-like inputs to either:
+ * - the original string value, or
+ * - a Uint8Array view over the source bytes.
+ */
+declare function toStringOrBytes(source: Arrayable<string | ArrayBuffer | Pick<Uint8Array<ArrayBuffer>, 'buffer' | 'byteOffset' | 'byteLength'>>): string | Awaited<ReturnType<Blob['bytes']>>;
+
+declare function isDeepEqual(a: unknown, b: unknown): boolean;
+
+declare const ORPC_NAME = "orpc";
+
+declare function isAbortError(error: unknown): error is Error;
+
+type AnyFunction = (...args: any[]) => any;
+/**
+ * Checks whether a value is an async generator function (`async function*`).
+ */
+declare function isAsyncGeneratorFunction(value: unknown): value is (...args: any[]) => AsyncGenerator;
+declare function once<T>(fn: () => T): () => T;
+/**
+ * Executes the callback function after the current call stack has been cleared.
+ */
+declare function defer(callback: () => void): void;
+declare function tryOrUndefined<T>(fn: () => T): undefined | T;
+
+declare function pathToHttpPath(path: readonly string[]): `/${string}`;
+declare function normalizeHttpPath(path: string): `/${string}`;
+declare function mergeHttpPath(a: `/${string}`, b: `/${string}`): `/${string}`;
+declare function matchesHttpPathPrefix(url: `/${string}`, prefix: `/${string}`): boolean;
+declare function matchesHttpPath(url: `/${string}`, path: `/${string}`): boolean;
+/**
+ * Parse Accept-Encoding into each coding's q-value, where `0` means the coding is explicitly
+ * unacceptable. The `*` wildcard is kept under its own key, so a caller can honour it while
+ * still letting a specific coding take precedence over it.
+ *
+ * @see https://www.rfc-editor.org/rfc/rfc9110.html#name-accept-encoding
+ */
+declare function parseAcceptEncodingQualities(header: string | undefined): Map<string, number>;
+/**
+ * Add `accept-encoding` to a Vary header value. The encoding is chosen from the request, so a
+ * shared cache must key on it or it will hand a compressed body to a client that cannot decode it.
+ *
+ * @see https://www.rfc-editor.org/rfc/rfc9110.html#name-vary
+ */
+declare function varyByAcceptEncoding(vary: string | undefined): string;
+declare function isNoTransformCacheControl(cacheControl: string | undefined): boolean;
+declare function isCompressibleContentType(contentType: string | null | undefined): boolean;
+
+/**
+ * Compares two sequential IDs.
+ * Returns:
+ *  - negative if `a` < `b`
+ *  - positive if `a` > `b`
+ *  - 0 if equal
+ */
+declare function compareSequentialIds(a: string, b: string): number;
+
+type IntersectPick<T, U> = Pick<T, keyof T & keyof U>;
+/**
+ * Remove protected/private properties/methods
+ */
+type Public<T> = Pick<T, keyof T>;
+type PromiseWithError<T, TError> = Promise<T> & {
+    __error?: {
+        type: TError;
+    };
+};
+/**
+ * The place where you can config the orpc types.
+ *
+ * - `ThrowableError` the error type that represent throwable errors should be `Error` or `null | undefined | {}` if you want more strict.
+ */
+interface Registry {
+}
+type ThrowableError = Registry extends {
+    ThrowableError: infer T;
+} ? T : Error;
+
+type InterceptableOptions = Record<string, any>;
+type InterceptorOptions<TOptions extends InterceptableOptions, TResult> = Omit<TOptions, 'next'> & {
+    next(options?: TOptions): TResult;
+};
+type Interceptor<TOptions extends InterceptableOptions, TResult> = (options: InterceptorOptions<TOptions, TResult>) => TResult;
+/**
+ * Can used for interceptors or middlewares
+ */
+declare function onStart<T, TOptions extends {
+    next: () => any;
+}, TRest extends any[]>(callback: NoInfer<(options: TOptions, ...rest: TRest) => Promisable<void>>): (options: TOptions, ...rest: TRest) => T | Promise<Awaited<ReturnType<TOptions['next']>>>;
+/**
+ * Can used for interceptors or middlewares
+ */
+declare function onSuccess<T, TOptions extends {
+    next: () => any;
+}, TRest extends any[]>(callback: NoInfer<(result: Awaited<ReturnType<TOptions['next']>>, options: TOptions, ...rest: TRest) => Promisable<void>>): (options: TOptions, ...rest: TRest) => T | Promise<Awaited<ReturnType<TOptions['next']>>>;
+/**
+ * Creates an interceptor or middleware that invokes a callback whenever an error
+ * is thrown. The error is rethrown after the callback completes.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/fetch-api | Fetch API Adapter}
+ */
+declare function onError<T, TOptions extends {
+    next: () => any;
+}, TRest extends any[]>(callback: NoInfer<(error: ReturnType<TOptions['next']> extends PromiseWithError<any, infer E> ? E : ThrowableError, options: TOptions, ...rest: TRest) => Promisable<void>>): (options: TOptions, ...rest: TRest) => T | Promise<Awaited<ReturnType<TOptions['next']>>>;
+type OnFinishState<TResult, TError> = [error: TError, data: undefined, isSuccess: false] | [error: null, data: TResult, isSuccess: true];
+/**
+ * Can used for interceptors or middlewares
+ */
+declare function onFinish<T, TOptions extends {
+    next: () => any;
+}, TRest extends any[]>(callback: NoInfer<(state: OnFinishState<Awaited<ReturnType<TOptions['next']>>, ReturnType<TOptions['next']> extends PromiseWithError<any, infer E> ? E : ThrowableError>, options: TOptions, ...rest: TRest) => Promisable<void>>): (options: TOptions, ...rest: TRest) => T | Promise<Awaited<ReturnType<TOptions['next']>>>;
+/**
+ * Creates a middleware or interceptor that invokes a callback when the returned async
+ * iterator object throws an error while being consumed.
+ *
+ * This does not replace the `onError`. `onError` only fires on the
+ * initial call (before the interceptor returns the iterator), whereas this
+ * callback only fires while consuming the iterator. Use both together to
+ * catch all possible errors.
+ */
+declare function onAsyncIteratorObjectError<T, TOptions extends {
+    next: () => any;
+}, TRest extends any[]>(callback: NoInfer<(error: ThrowableError | (ReturnType<TOptions['next']> extends PromiseWithError<any, infer E> ? E : ThrowableError), options: TOptions, ...rest: TRest) => Promisable<void>>): (options: TOptions, ...rest: TRest) => T | Promise<Awaited<ReturnType<TOptions['next']>>>;
+/**
+ * Creates an interceptor that invokes a callback when the returned readable
+ * stream errors while being consumed.
+ *
+ * This does not replace the `onError`. `onError` only fires on the
+ * initial call (before the interceptor returns the stream), whereas this
+ * callback only fires while consuming the stream. Use both together to catch
+ * all possible errors.
+ */
+declare function onReadableStreamError<T, TOptions extends {
+    next: () => any;
+}, TRest extends any[]>(callback: NoInfer<(error: ThrowableError | (ReturnType<TOptions['next']> extends PromiseWithError<any, infer E> ? E : ThrowableError), options: TOptions, ...rest: TRest) => Promisable<void>>): (options: TOptions, ...rest: TRest) => T | Promise<Awaited<ReturnType<TOptions['next']>>>;
+declare function intercept<TOptions extends InterceptableOptions, TResult>(interceptors: undefined | Interceptor<TOptions, TResult>[], options: NoInfer<TOptions>, main: NoInfer<(options: TOptions) => TResult>): TResult;
+
+type TracingAttributeValue = string | number | boolean | string[] | number[] | boolean[];
+interface TracingException {
+    name?: string;
+    message: string;
+    stack?: string;
+    code?: string | number;
+}
+type TracingHeaders = Record<string, string | string[] | undefined>;
+type TracingExceptionLevel = 'error' | 'info';
+interface TracingSpan {
+    setAttribute(key: string, value: TracingAttributeValue): void;
+    /**
+     * Renames the span. Backends that cannot rename spans ignore it.
+     */
+    updateName(name: string): void;
+    /**
+     * Adds an event to the span. Backends without span events ignore it.
+     */
+    addEvent(name: string): void;
+    /**
+     * Records an exception on the span. The `error` level also marks the span as failed.
+     */
+    recordException(level: TracingExceptionLevel, exception: TracingException): void;
+    end(): void;
+}
+/**
+ * The tracing backend oRPC records spans with, see `@orpc/opentelemetry` and `@orpc/cloudflare`.
+ *
+ * A `parent` defaults to the active span of the backend when omitted.
+ */
+interface Tracer {
+    /**
+     * Starts a span without making it active. The caller must end it.
+     */
+    startSpan(name: string, parent?: TracingSpan): TracingSpan;
+    /**
+     * Starts a span, makes it active while `fn` runs, and passes it to `fn`. The caller must end it.
+     */
+    startActiveSpan<T>(name: string, parent: TracingSpan | undefined, fn: (span: TracingSpan) => Promise<T>): Promise<T>;
+    getActiveSpan(): TracingSpan | undefined;
+    /**
+     * Runs `fn` with `span` as the active span. Backends that cannot activate a span run `fn` directly.
+     */
+    withActiveSpan<T>(span: TracingSpan, fn: () => Promisable<T>): Promisable<T>;
+    /**
+     * Writes the trace context of `span` into `headers`. Absent when the backend does not propagate context.
+     */
+    inject?(span: TracingSpan, headers: TracingHeaders): void;
+    /**
+     * Reads the remote parent from `headers`. Absent when the backend does not propagate context.
+     */
+    extract?(headers: TracingHeaders): TracingSpan | undefined;
+}
+declare function setTracer(tracer: Tracer | undefined): void;
+declare function getTracer(): Tracer | undefined;
+interface StartSpanOptions {
+    /**
+     * The name of the span to create.
+     */
+    name: string;
+    /**
+     * The span to use as parent. Defaults to the active span of the backend.
+     */
+    parent?: TracingSpan | undefined;
+}
+declare function startSpan(options: StartSpanOptions | string): TracingSpan | undefined;
+declare function recordSpanError(span: TracingSpan | undefined, error: unknown): void;
+declare function setSpanAttributeIfDefined(span: TracingSpan | undefined, key: string, value: TracingAttributeValue | undefined): void;
+declare function toTracingException(error: unknown): TracingException;
+declare function toSpanAttributeValue(data: unknown): string;
+declare function runWithSpan<T>(options: string | StartSpanOptions, fn: (span?: TracingSpan) => Promisable<T>): Promise<T>;
+declare function runInSpanContext<T>(span: TracingSpan | undefined, fn: () => Promisable<T>): Promisable<T>;
+
+interface WrapAsyncIteratorOptions<TYield, TReturn, TMappedYield, TMappedReturn> {
+    /**
+     * Any call to the original iterator will be executed inside this function.
+     * Useful when you want execution to happen within a specific context,
+     * such as AsyncLocalStorage.
+     */
+    runWith?: <T>(run: () => Promise<T>) => Promisable<T>;
+    mapResult?: (result: IteratorResult<TYield, TReturn>) => Promisable<IteratorResult<TMappedYield, TMappedReturn>>;
+    mapError?: (error: ThrowableError) => Promisable<ThrowableError>;
+    onError?: (error: ThrowableError) => Promisable<void>;
+    /**
+     * Execute after the stream finishes or is cancelled.
+     */
+    onFinish?: () => Promisable<void>;
+}
+declare function wrapAsyncIterator<TYield, TReturn, TMappedYield = TYield, TMappedReturn = TReturn>(iterator: AsyncIterator<TYield, TReturn>, { runWith, mapResult, mapError, onError, onFinish }: WrapAsyncIteratorOptions<TYield, TReturn, TMappedYield, TMappedReturn>): NoInfer<AsyncIteratorClass<TMappedYield, TMappedReturn>>;
+declare function traceAsyncIterator<T, TReturn, TNext>(options: StartSpanOptions | string, iterator: AsyncIterator<T, TReturn, TNext>): AsyncIteratorClass<T, TReturn, TNext>;
+declare function replicateAsyncIterator<T, TReturn, TNext>(source: AsyncIterator<T, TReturn, TNext>, count: number): (AsyncIteratorClass<T, TReturn, TNext>)[];
+interface ConsumeAsyncIteratorOptions<T, TReturn, TError> {
+    /**
+     * Called on each event
+     */
+    onEvent: (event: T) => void;
+    /**
+     * Called once error happens
+     */
+    onError?: (error: TError) => void;
+    /**
+     * Called once AsyncIteratorObject is done
+     *
+     * @remarks
+     * **Note**: If iterator is canceled, `undefined` can be passed on success
+     */
+    onSuccess?: (value: TReturn | undefined) => void;
+    /**
+     * Called once after onError or onSuccess
+     *
+     * @remarks
+     * **Note**: If iterator is canceled, `undefined` can be passed on success
+     */
+    onFinish?: (state: [error: TError, data: undefined, isSuccess: false] | [error: null, data: TReturn | undefined, isSuccess: true]) => void;
+}
+/**
+ * Consumes an AsyncIteratorObject with lifecycle callbacks.
+ *
+ * @remarks
+ * **Warning**: If no `onError` or `onFinish` is provided, errors are thrown into the unhandled rejection channel.
+ *
+ * @returns An unsubscribe callback that stops consuming and cleans up the iterator.
+ * @see {@link https://orpc.dev/docs/client/async-iterator-object#using-consumeasynciterator | AsyncIteratorObject in Client - Using consumeAsyncIterator}
+ */
+declare function consumeAsyncIterator<T, TReturn, TError = ThrowableError>(iterator: AsyncIterator<T, TReturn> | PromiseWithError<AsyncIterator<T, TReturn>, TError>, options: ConsumeAsyncIteratorOptions<T, TReturn, TError | ThrowableError>): () => Promise<void>;
+
+type Segment = string | number;
+declare function findDeepMatches(check: (value: unknown) => boolean, payload: unknown, segments?: Segment[], maps?: Segment[][], values?: unknown[]): {
+    maps: Segment[][];
+    values: unknown[];
+};
+/**
+ * Get constructor of the value
+ *
+ */
+declare function getConstructor(value: unknown): Function | null | undefined;
+declare function getConstructors(value: unknown): Generator<Function>;
+/**
+ * Checks whether a value is a plain object, including objects created with
+ * `Object.create(null)`.
+ */
+declare function isPlainObject(value: unknown): value is Record<PropertyKey, unknown>;
+/**
+ * Returns `object[key]` only when it is an own property, so keys like
+ * `toString` do not resolve through the prototype chain.
+ */
+declare function getOwn<T extends object>(object: T, key: PropertyKey): T[keyof T] | undefined;
+declare function get(object: unknown, path: readonly PropertyKey[]): unknown;
+/**
+ * Sets a value at the given path, creating plain objects for intermediate keys as needed.
+ */
+declare function set(root: object, path: [PropertyKey, ...PropertyKey[]] | [...PropertyKey[], PropertyKey], value: unknown): void;
+/**
+ * Sets `object[key]`, defining `__proto__` as an own property instead of re-parenting the object.
+ */
+declare function setOwn(object: object, key: PropertyKey, value: unknown): void;
+/**
+ * Merges two values by copying the second over the first, repeating the merge one level deeper for
+ * nested plain objects. Anything that is not a pair of plain objects is replaced by the second one.
+ */
+declare function mergeTwoLevels(first: unknown, second: unknown): unknown;
+declare function omit<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Omit<T, K>;
+/**
+ * Deep clones arrays and plain objects, leaving every other value as is.
+ * Circular and shared references are preserved in the copy.
+ */
+declare function clone<T>(value: T): T;
+declare function copyOnWrite(parent: object, key: PropertyKey, original: unknown): unknown;
+declare function isPropertyKey(value: unknown): value is PropertyKey;
+declare const NullProtoObj: ({
+    new <T extends Record<PropertyKey, unknown>>(): T;
+});
+/**
+ * Returns an object containing all methods of the given object, with each
+ * method bound to the original object instance.
+ *
+ * Methods are collected from both the object itself and its prototype chain
+ * (excluding `Object.prototype` and the `constructor` property).
+ */
+declare function bindMethods<T extends object>(obj: T, options?: {
+    unbound?: (keyof T)[];
+}): Pick<T, {
+    [K in keyof T]: T[K] extends AnyFunction ? K : never;
+}[keyof T]>;
+
+interface OrderablePlugin {
+    /** Unique name of the plugin, used for ordering and identification. */
+    name: string;
+    /** Plugins this plugin should execute before. */
+    before?: string[] | undefined;
+    /** Plugins this plugin should execute after. */
+    after?: string[] | undefined;
+}
+/**
+ * Sorts plugins based on their `before` and `after` dependencies.
+ */
+declare function sortPlugins<T extends OrderablePlugin>(plugins: T[]): T[];
+
+/**
+ * Creates a promise together with its associated `resolve` and `reject`
+ * functions.
+ *
+ * Equivalent to `Promise.withResolvers()`, but works in environments
+ * where that API is not yet available.
+ */
+declare function promiseWithResolvers<T>(): {
+    promise: Promise<T>;
+    resolve: (v: T) => void;
+    reject: (reason: unknown) => void;
+};
+
+type Value<T, TArgs extends any[] = []> = T | ((...args: TArgs) => T);
+declare function value<T, TArgs extends any[]>(value: Value<T, TArgs>, ...args: NoInfer<TArgs>): T extends Value<infer U, any> ? U : never;
+
+/**
+ * Creates a proxy that overlays a `partial` object on top of a `target`.
+ *
+ * - Properties from `partial` take precedence.
+ * - Properties not present in `partial` fall back to the resolved `target`.
+ * - Methods are bound to the proxy to ensure a consistent `this` context.
+ *
+ * Useful for overriding specific properties of an object while delegating
+ * all other access to the original target without needing to know its full structure.
+ */
+declare function override<T extends object, U extends object>(target: Value<T>, partial: U): U & Omit<T, keyof U>;
+
+interface AsyncIdQueueCloseOptions {
+    id?: string;
+    reason?: unknown;
+}
+declare class AsyncIdQueue<T> {
+    private readonly openIds;
+    private readonly queues;
+    private readonly waiters;
+    get size(): number;
+    open(id: string): void;
+    isOpen(id: string): boolean;
+    push(id: string, item: T): void;
+    pull(id: string): Promise<T>;
+    close({ id, reason }?: AsyncIdQueueCloseOptions): void;
+    private assertOpen;
+}
+
+/**
+ * Returns a signal that aborts only after all provided signals are aborted.
+ */
+declare function allAbortSignal(signals: readonly (AbortSignal | undefined)[]): AbortSignal | undefined;
+/**
+ * Returns a signal that aborts as soon as any of the provided signals aborts,
+ * with the same abort reason.
+ *
+ * Prefers the native `AbortSignal.any` when available, and falls back to a manual
+ * implementation otherwise, including in runtimes without the `AbortSignal` global.
+ */
+declare function anyAbortSignal(signals: readonly (AbortSignal | undefined)[]): AbortSignal | undefined;
+declare function runWithSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T>;
+
+declare function replicateReadableStream<T>(stream: ReadableStream<T>, count: number): ReadableStream<T>[];
+type ReadableStreamReadResult<T> = {
+    done: false;
+    value: T;
+} | {
+    done: true;
+    value?: undefined | T;
+};
+interface WrapReadableStreamOptions<T, TMapped> {
+    /**
+     * Any call to the original stream reader will be executed inside this function.
+     * Useful when you want execution to happen within a specific context,
+     * such as AsyncLocalStorage.
+     */
+    runWith?: <T>(run: () => Promise<T>) => Promisable<T>;
+    mapResult?: (result: ReadableStreamReadResult<T>) => Promisable<ReadableStreamReadResult<TMapped>>;
+    mapError?: (error: ThrowableError) => Promisable<ThrowableError>;
+    onError?: (error: ThrowableError) => Promisable<void>;
+    /**
+     * Guaranteed to execute exactly once after the stream finishes or is cancelled.
+     */
+    onFinish?: () => Promisable<void>;
+}
+declare function wrapReadableStream<T, TMapped = T>(stream: ReadableStream<T>, { runWith, mapResult, mapError, onError, onFinish }: WrapReadableStreamOptions<T, TMapped>): NoInfer<ReadableStream<TMapped>>;
+declare function traceReadableStream<T>(options: StartSpanOptions | string, stream: ReadableStream<T>): ReadableStream<T>;
+/**
+ * Converts a {@link ReadableStream} into an {@link AsyncIteratorClass}.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/ai-sdk | AI SDK Integration}
+ */
+declare function streamToAsyncIteratorObject<T>(stream: ReadableStream<T>, { signal }?: {
+    signal?: undefined | AbortSignal;
+}): AsyncIteratorClass<T>;
+/**
+ * Converts an `AsyncIterator` into a `ReadableStream`.
+ */
+declare function asyncIteratorToStream<T>(iterator: AsyncIterator<T>): ReadableStream<T>;
+/**
+ * Converts an `AsyncIterator` into a `ReadableStream`, ensuring that
+ * all emitted object values are *unproxied* before enqueuing.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/ai-sdk | AI SDK Integration}
+ */
+declare function asyncIteratorToUnproxiedDataStream<T>(iterator: AsyncIterator<T>): ReadableStream<T>;
+
+export { AsyncIdQueue, NullProtoObj, ORPC_NAME, allAbortSignal, anyAbortSignal, asyncIteratorToStream, asyncIteratorToUnproxiedDataStream, bindMethods, clone, compareSequentialIds, consumeAsyncIterator, copyOnWrite, defer, findDeepMatches, get, getConstructor, getConstructors, getOwn, getTracer, intercept, isAbortError, isAsyncGeneratorFunction, isCompressibleContentType, isDeepEqual, isNoTransformCacheControl, isPlainObject, isPropertyKey, loadBytes, matchesHttpPath, matchesHttpPathPrefix, mergeHttpPath, mergeTwoLevels, normalizeHttpPath, omit, onAsyncIteratorObjectError, onError, onFinish, onReadableStreamError, onStart, onSuccess, once, override, parseAcceptEncodingQualities, pathToHttpPath, promiseWithResolvers, recordSpanError, replicateAsyncIterator, replicateReadableStream, resolveMaybeOptionalOptions, runInSpanContext, runWithSignal, runWithSpan, set, setOwn, setSpanAttributeIfDefined, setTracer, sortPlugins, splitInHalf, startSpan, streamToAsyncIteratorObject, toSpanAttributeValue, toStringOrBytes, toTracingException, traceAsyncIterator, traceReadableStream, tryOrUndefined, value, varyByAcceptEncoding, wrapAsyncIterator, wrapReadableStream };
+export type { AnyFunction, AsyncIdQueueCloseOptions, ConsumeAsyncIteratorOptions, InterceptableOptions, Interceptor, InterceptorOptions, IntersectPick, MaybeOptionalOptions, OnFinishState, OrderablePlugin, PromiseWithError, Public, ReadableStreamReadResult, Registry, Segment, StartSpanOptions, ThrowableError, Tracer, TracingAttributeValue, TracingException, TracingExceptionLevel, TracingHeaders, TracingSpan, Value, WrapAsyncIteratorOptions, WrapReadableStreamOptions };

@@ -1,0 +1,9 @@
+import { A11yDevtoolsPanel, A11yDevtoolsPanelNoOp } from "./A11yDevtools.js";
+import { a11yDevtoolsNoOpPlugin, a11yDevtoolsPlugin as a11yDevtoolsPlugin$1 } from "./plugin.js";
+//#region src/solid/index.ts
+var A11yDevtools = process.env.NODE_ENV !== "development" ? A11yDevtoolsPanelNoOp : A11yDevtoolsPanel;
+var a11yDevtoolsPlugin = process.env.NODE_ENV !== "development" ? a11yDevtoolsNoOpPlugin : a11yDevtoolsPlugin$1;
+//#endregion
+export { A11yDevtools, a11yDevtoolsPlugin };
+
+//# sourceMappingURL=index.js.map

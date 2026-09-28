@@ -1,0 +1,34 @@
+import { C as Context } from './server.BsujoJoF.js';
+import { b as StandardHandlerPlugin, c as StandardHandlerOptions } from './server.Cxranw-8.js';
+
+interface RequestLimitHandlerPluginOptions {
+    /**
+     * The maximum allowed request body size in bytes.
+     */
+    maxBodySize: number;
+}
+/**
+ * Rejects requests whose body exceeds `maxBodySize`.
+ *
+ * When used with the request compression plugin, the limit applies to the
+ * decompressed payload rather than the compressed wire size.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/request-limit | Request Limit Plugin}
+ */
+declare class RequestLimitHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    /**
+     * Should limit the original batch request body instead of sub-requests.
+     */
+    after: string[];
+    /**
+     * Should limit the final body size instead of the compressed one.
+     */
+    before: string[];
+    private readonly maxBodySize;
+    constructor(options: RequestLimitHandlerPluginOptions);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+export { RequestLimitHandlerPlugin as R };
+export type { RequestLimitHandlerPluginOptions as a };

@@ -1,0 +1,205 @@
+import { wrapAsyncIteratorPreservingEventMeta, ORPCError } from '@orpc/client';
+import { createORPCErrorConstructorMap, reconcileORPCError, ValidationError, ProcedureContract } from '@orpc/contract';
+import { getConstructor, isTypescriptObject, resolveMaybeOptionalOptions, toArray, value, runWithSpan, intercept, isAsyncIteratorObject, override, getTracer, traceAsyncIterator, traceReadableStream, isPlainObject, mergeTwoLevels } from '@orpc/shared';
+
+class Lazy {
+  "~orpc";
+  constructor(def) {
+    this["~orpc"] = def;
+  }
+  /**
+   * Checks if the given instance satisfies the {@link Lazy} class/interface.
+   */
+  static [Symbol.hasInstance](instance) {
+    if (this !== Lazy) {
+      return Function.prototype[Symbol.hasInstance].call(this, instance);
+    }
+    const constructor = getConstructor(instance);
+    if (constructor === Lazy) {
+      return true;
+    }
+    return isTypescriptObject(instance) && isTypescriptObject(instance["~orpc"]) && isTypescriptObject(instance["~orpc"].meta) && (instance["~orpc"].metaPlugins === void 0 || Array.isArray(instance["~orpc"].metaPlugins)) && typeof instance["~orpc"].loader === "function";
+  }
+}
+function unlazy(maybeLazy) {
+  return maybeLazy instanceof Lazy ? maybeLazy["~orpc"].loader() : Promise.resolve({ default: maybeLazy });
+}
+
+function createProcedureClient(lazyableProcedure, ...rest) {
+  const options = resolveMaybeOptionalOptions(rest);
+  return async (...[input, callerOptions]) => {
+    const path = toArray(options.path);
+    const { default: procedure } = await unlazy(lazyableProcedure);
+    const clientContext = callerOptions?.context ?? {};
+    const context = await value(options.context, clientContext) ?? {};
+    const errors = createORPCErrorConstructorMap(procedure["~orpc"].errorMap);
+    const reconcileError = async (e) => {
+      if (e instanceof ORPCError) {
+        return await reconcileORPCError(procedure["~orpc"].errorMap, e);
+      }
+      return e;
+    };
+    try {
+      const output = await runWithSpan("call_procedure", (span) => {
+        span?.setAttribute("procedure.path", path);
+        return intercept(
+          options.interceptors,
+          {
+            context,
+            // input can be optional if it is undefinable
+            input,
+            errors,
+            path,
+            procedure,
+            signal: callerOptions?.signal,
+            lastEventId: callerOptions?.lastEventId
+          },
+          (interceptorOptions) => executeProcedureInternal(interceptorOptions.procedure, interceptorOptions)
+        );
+      });
+      if (isAsyncIteratorObject(output)) {
+        return override(output, wrapAsyncIteratorPreservingEventMeta(
+          getTracer() ? traceAsyncIterator("consume_async_iterator_object_output", output) : output,
+          { mapError: reconcileError }
+        ));
+      } else if (getTracer() && output instanceof ReadableStream) {
+        return override(output, traceReadableStream("consume_octet_stream_output", output));
+      }
+      return output;
+    } catch (e) {
+      throw await reconcileError(e);
+    }
+  };
+}
+async function validateInput(i, schema, input) {
+  return runWithSpan(`validate_input.${i}`, async (span) => {
+    span?.setAttribute("input_schema.index", i);
+    const result = await schema["~standard"].validate(input);
+    if (result.issues) {
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Input validation failed",
+        data: {
+          issues: result.issues
+        },
+        cause: new ValidationError({
+          message: "Input validation failed",
+          issues: result.issues,
+          invalidData: input
+        })
+      });
+    }
+    return result.value;
+  });
+}
+async function validateOutput(i, schema, output) {
+  return runWithSpan(`validate_output.${i}`, async (span) => {
+    span?.setAttribute("output_schema.index", i);
+    const result = await schema["~standard"].validate(output);
+    if (result.issues) {
+      throw new ORPCError("INTERNAL_SERVER_ERROR", {
+        message: "Output validation failed",
+        cause: new ValidationError({
+          message: "Output validation failed",
+          issues: result.issues,
+          invalidData: output
+        })
+      });
+    }
+    return result.value;
+  });
+}
+const middlewareDone = (...rest) => {
+  const options = resolveMaybeOptionalOptions(rest);
+  return {
+    output: options.output,
+    // context can be undefined when all field is optional
+    context: options.context ?? {}
+  };
+};
+async function executeProcedureInternal(procedure, options) {
+  const inputSchemas = toArray(procedure["~orpc"].inputSchemas);
+  const outputSchemas = toArray(procedure["~orpc"].outputSchemas);
+  const orderedMiddlewares = procedure["~orpc"].orderedMiddlewares;
+  const next = async (midIndex, context, input) => {
+    let currentInput = input;
+    let middlewareInput = input;
+    const startInputIndex = midIndex === 0 ? 0 : orderedMiddlewares[midIndex - 1].inputSchemasLengthAtUse ?? 0;
+    const endInputIndex = midIndex === orderedMiddlewares.length ? inputSchemas.length : orderedMiddlewares[midIndex].inputSchemasLengthAtUse ?? 0;
+    if (!procedure["~orpc"].disableInputValidation) {
+      for (let i = startInputIndex; i < endInputIndex; i++) {
+        const validated = await validateInput(
+          i,
+          inputSchemas[i],
+          inputSchemas.length > 1 && isPlainObject(currentInput) ? options.input : currentInput
+        );
+        currentInput = i !== 0 ? mergeTwoLevels(currentInput, validated) : validated;
+      }
+      middlewareInput = endInputIndex > 0 && endInputIndex < inputSchemas.length ? mergeTwoLevels(options.input, currentInput) : currentInput;
+    }
+    let currentOutput;
+    let currentContext = context;
+    if (midIndex < orderedMiddlewares.length) {
+      const { middleware } = orderedMiddlewares[midIndex];
+      const result = await runWithSpan(`middleware.${middleware.name}`, async (span) => {
+        span?.setAttribute("middleware.index", midIndex);
+        return await middleware(
+          {
+            ...options,
+            context,
+            next: (...rest) => {
+              const nextOptions = resolveMaybeOptionalOptions(rest);
+              const nextContext = nextOptions.context ?? {};
+              return next(
+                midIndex + 1,
+                { ...context, ...nextContext },
+                currentInput
+              );
+            },
+            lastEventId: options.lastEventId
+          },
+          middlewareInput,
+          middlewareDone
+        );
+      });
+      currentOutput = result.output;
+      currentContext = { ...context, ...result.context };
+    } else {
+      currentOutput = await runWithSpan(
+        "handler",
+        () => procedure["~orpc"].handler({ ...options, context, input: currentInput }, currentInput)
+      );
+    }
+    const startOutputIndex = midIndex === 0 ? 0 : orderedMiddlewares[midIndex - 1].outputSchemasLengthAtUse ?? 0;
+    const endOutputIndex = midIndex === orderedMiddlewares.length ? outputSchemas.length : orderedMiddlewares[midIndex].outputSchemasLengthAtUse ?? 0;
+    if (!procedure["~orpc"].disableOutputValidation) {
+      for (let i = endOutputIndex - 1; i >= startOutputIndex; i--) {
+        currentOutput = await validateOutput(i, outputSchemas[i], currentOutput);
+      }
+    }
+    return { output: currentOutput, context: currentContext };
+  };
+  const { output } = await next(0, options.context, options.input);
+  return output;
+}
+
+class Procedure {
+  "~orpc";
+  constructor(def) {
+    this["~orpc"] = def;
+  }
+  /**
+   * Checks if the given instance satisfies the {@link Procedure} class/interface.
+   */
+  static [Symbol.hasInstance](instance) {
+    if (this !== Procedure) {
+      return Function.prototype[Symbol.hasInstance].call(this, instance);
+    }
+    const constructor = getConstructor(instance);
+    if (constructor === Procedure) {
+      return true;
+    }
+    return instance instanceof ProcedureContract && Array.isArray(instance["~orpc"].orderedMiddlewares) && typeof instance["~orpc"].handler === "function";
+  }
+}
+
+export { Lazy as L, Procedure as P, createProcedureClient as c, unlazy as u };

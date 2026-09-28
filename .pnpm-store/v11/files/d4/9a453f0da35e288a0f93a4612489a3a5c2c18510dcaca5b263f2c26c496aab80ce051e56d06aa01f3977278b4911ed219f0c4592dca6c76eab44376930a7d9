@@ -1,0 +1,874 @@
+export { B as BracketNotationSerializer } from './shared/openapi.B2G-HeFn.mjs';
+import { createContractClientFactory, getAsyncIteratorObjectSchemaDetails, ProcedureContract, resolveMetaPlugins } from '@orpc/contract';
+import { D as DEFAULT_OPENAPI_METHOD, a as DEFAULT_OPENAPI_INPUT_STRUCTURE, c as DEFAULT_OPENAPI_SUCCESS_DESCRIPTION, b as DEFAULT_OPENAPI_OUTPUT_STRUCTURE, i as isBodylessMethod, O as OpenAPISerializer, g as getDynamicPathParams } from './shared/openapi.B1LWf28E.mjs';
+export { d as OpenAPIJsonSerializer } from './shared/openapi.B1LWf28E.mjs';
+import { g as getOpenAPIMeta, o as openapi } from './shared/openapi.B9PQzqBn.mjs';
+import { downgradeSpecV32ToV31, downgradeSpecV31ToV30 } from '@openapi-spec/downgrader';
+import { COMMON_ERROR_STATUS_MAP } from '@orpc/client';
+export { COMMON_ERROR_STATUS_MAP } from '@orpc/client';
+import { encodeJsonPointerSegment, ensureJsonSchemaObject, mapJsonSchemaRefs, decodeJsonPointerSegment, isUnconstrainedSchema, combineJsonSchemasWithComposition, extractJsonObjectSchemaEntries, combineJsonObjectSchemaEntries, flattenJsonUnionSchema, isJsonPrimitiveSchema, matchArrayableJsonSchema, isJsonFileSchema, DelegatingJsonSchemaConverter, StandardJsonSchemaConverter } from '@orpc/json-schema';
+import { DEFAULT_SUCCESS_STATUS, DEFAULT_ERROR_STATUS, walkProcedureContractsAsync } from '@orpc/server';
+import { isDeepEqual, value, findDeepMatches, isPlainObject, stringifyJSON, toArray, clone, pathToHttpPath, mergeHttpPath, isTypescriptObject } from '@orpc/shared';
+import '@standard-server/core';
+
+function createContractJsonifiedClientFactory(link, options = {}) {
+  return createContractClientFactory(link, options);
+}
+
+class OpenAPIComponentRegistry {
+  constructor(doc, customComponentName) {
+    this.doc = doc;
+    this.customComponentName = customComponentName;
+  }
+  /**
+   * Registers `schema` as a component under `preferredName` (or an equivalent/postfixed name)
+   * and returns a `$ref` to it.
+   */
+  register(preferredName, schema) {
+    const { $defs, ...body } = schema;
+    let defName = preferredName;
+    if ($defs) {
+      for (let i = 2; defName in $defs; i++) {
+        defName = `${preferredName}${i}`;
+      }
+    }
+    return this.hoistDefs({
+      $defs: { ...$defs, [defName]: body },
+      $ref: `#/$defs/${encodeJsonPointerSegment(defName)}`
+    });
+  }
+  /**
+   * Moves a schema's root-level `$defs` into `doc.components.schemas` and rewrites
+   * its refs accordingly.
+   */
+  hoistDefs(schema, direction) {
+    if (typeof schema !== "object" || !schema.$defs) {
+      return schema;
+    }
+    const { $defs, ...rest } = schema;
+    const defs = {};
+    const preferredNames = {};
+    for (const defName of Object.keys($defs)) {
+      const defSchema = $defs[defName];
+      if (defSchema === void 0) {
+        continue;
+      }
+      const normalized = ensureJsonSchemaObject(defSchema);
+      defs[defName] = normalized;
+      preferredNames[defName] = this.customComponentName?.(defName, normalized) ?? defName;
+    }
+    const defNames = Object.keys(defs);
+    if (defNames.length === 0) {
+      return schema;
+    }
+    this.doc.components ??= {};
+    this.doc.components.schemas ??= {};
+    const componentsSchemas = this.doc.components.schemas;
+    const identityRenameMap = Object.fromEntries(
+      defNames.map((defName) => [defName, preferredNames[defName]])
+    );
+    const renameMap = {};
+    const pendingSchemas = [];
+    for (const defName of defNames) {
+      const cleanSchema = defs[defName];
+      const candidateSchemas = Object.fromEntries(
+        defNames.map((currentDefName) => [
+          preferredNames[currentDefName],
+          rewriteComponentSchemaRefs(defs[currentDefName], {
+            ...identityRenameMap,
+            ...renameMap
+          })
+        ])
+      );
+      const preferredName = preferredNames[defName];
+      const prelimSchema = candidateSchemas[preferredName];
+      const [componentName, reuseExisting] = resolveComponentName(
+        componentsSchemas,
+        new Set(Object.values(renameMap)),
+        preferredName,
+        prelimSchema,
+        candidateSchemas,
+        direction
+      );
+      renameMap[defName] = componentName;
+      if (!reuseExisting) {
+        pendingSchemas.push({ cleanSchema, componentName });
+      }
+    }
+    for (const { cleanSchema, componentName } of pendingSchemas) {
+      componentsSchemas[componentName] = rewriteComponentSchemaRefs(
+        cleanSchema,
+        renameMap
+      );
+    }
+    return rewriteComponentSchemaRefs(rest, renameMap);
+  }
+  toOpenAPISchema(schema, direction) {
+    return ensureJsonSchemaObject(this.hoistDefs(schema, direction));
+  }
+}
+function resolveComponentName(componentsSchemas, claimedNames, preferredName, schema, candidateSchemas, direction) {
+  let mintName;
+  for (let i = 1; ; i++) {
+    const [componentName, mintable, tail] = componentNameCandidate(preferredName, direction, i);
+    const existingSchema = componentsSchemas[componentName];
+    if (existingSchema === void 0) {
+      if (mintable && !claimedNames.has(componentName)) {
+        mintName ??= componentName;
+        if (tail) {
+          return [mintName, false];
+        }
+      }
+      continue;
+    }
+    if (areSchemasEquivalentForReuse(
+      schema,
+      existingSchema,
+      schema,
+      existingSchema,
+      candidateSchemas,
+      componentsSchemas,
+      /* @__PURE__ */ new Map([[preferredName, componentName]]),
+      /* @__PURE__ */ new Map([[componentName, preferredName]])
+    )) {
+      return [componentName, true];
+    }
+  }
+}
+function componentNameCandidate(preferredName, direction, attempt) {
+  if (attempt === 1) {
+    return [preferredName, true, false];
+  }
+  if (direction !== void 0) {
+    if (attempt === 2) {
+      return [`${preferredName}${direction === "input" ? "Input" : "Output"}`, true, false];
+    }
+    if (attempt === 3) {
+      return [`${preferredName}${direction === "input" ? "Output" : "Input"}`, false, false];
+    }
+    return [`${preferredName}${attempt - 2}`, true, true];
+  }
+  return [`${preferredName}${attempt}`, true, true];
+}
+function definedKeysOf(object) {
+  return Object.keys(object).filter((key) => object[key] !== void 0).sort();
+}
+function areSchemasEquivalentForReuse(candidate, existing, candidateRootSchema, existingRootSchema, candidateSchemas, existingSchemas, candidateToExistingComponentNames, existingToCandidateComponentNames, visited = /* @__PURE__ */ new WeakMap()) {
+  if (candidate === existing) {
+    return true;
+  }
+  if (typeof candidate !== typeof existing) {
+    return false;
+  }
+  if (candidate === null || existing === null) {
+    return candidate === existing;
+  }
+  if (typeof candidate !== "object" || typeof existing !== "object") {
+    return isDeepEqual(candidate, existing);
+  }
+  const seenExisting = visited.get(candidate);
+  if (seenExisting?.has(existing)) {
+    return true;
+  }
+  if (seenExisting) {
+    seenExisting.add(existing);
+  } else {
+    visited.set(candidate, new WeakSet([existing]));
+  }
+  if (Array.isArray(candidate) || Array.isArray(existing)) {
+    if (!Array.isArray(candidate) || !Array.isArray(existing) || candidate.length !== existing.length) {
+      return false;
+    }
+    return candidate.every((item, index) => areSchemasEquivalentForReuse(
+      item,
+      existing[index],
+      candidateRootSchema,
+      existingRootSchema,
+      candidateSchemas,
+      existingSchemas,
+      candidateToExistingComponentNames,
+      existingToCandidateComponentNames,
+      visited
+    ));
+  }
+  const candidateObject = candidate;
+  const existingObject = existing;
+  const candidateKeys = definedKeysOf(candidateObject);
+  const existingKeys = definedKeysOf(existingObject);
+  if (!isDeepEqual(candidateKeys, existingKeys)) {
+    return false;
+  }
+  return candidateKeys.every((key) => {
+    const candidateValue = candidateObject[key];
+    const existingValue = existingObject[key];
+    if (key === "$ref" && typeof candidateValue === "string" && typeof existingValue === "string") {
+      return areSchemaRefsEquivalentForReuse(
+        candidateValue,
+        existingValue,
+        candidateRootSchema,
+        existingRootSchema,
+        candidateSchemas,
+        existingSchemas,
+        candidateToExistingComponentNames,
+        existingToCandidateComponentNames,
+        visited
+      );
+    }
+    return areSchemasEquivalentForReuse(
+      candidateValue,
+      existingValue,
+      candidateRootSchema,
+      existingRootSchema,
+      candidateSchemas,
+      existingSchemas,
+      candidateToExistingComponentNames,
+      existingToCandidateComponentNames,
+      visited
+    );
+  });
+}
+function parseComponentRefName(ref) {
+  if (!ref.startsWith("#/components/schemas/")) {
+    return void 0;
+  }
+  return ref.slice("#/components/schemas/".length).split("/").map(decodeJsonPointerSegment).join("/");
+}
+function resolveSchemaComparisonRef(ref, rootSchema, componentsSchemas) {
+  const localDefName = parseLocalDefRefName(ref);
+  if (localDefName !== void 0 && typeof rootSchema === "object" && rootSchema !== null) {
+    const localDef = rootSchema.$defs?.[localDefName];
+    if (localDef !== void 0) {
+      return {
+        schema: localDef,
+        rootSchema
+      };
+    }
+  }
+  const componentName = parseComponentRefName(ref);
+  if (componentName !== void 0) {
+    const componentSchema = componentsSchemas[componentName];
+    if (componentSchema !== void 0) {
+      return {
+        schema: componentSchema,
+        rootSchema: componentSchema
+      };
+    }
+  }
+  return void 0;
+}
+function areSchemaRefsEquivalentForReuse(candidateRef, existingRef, candidateRootSchema, existingRootSchema, candidateSchemas, existingSchemas, candidateToExistingComponentNames, existingToCandidateComponentNames, visited) {
+  const candidateComponentName = parseComponentRefName(candidateRef);
+  const existingComponentName = parseComponentRefName(existingRef);
+  if (candidateComponentName === void 0 !== (existingComponentName === void 0)) {
+    return false;
+  }
+  if (candidateComponentName !== void 0 && existingComponentName !== void 0) {
+    const mappedExisting = candidateToExistingComponentNames.get(candidateComponentName);
+    if (mappedExisting !== void 0 && mappedExisting !== existingComponentName) {
+      return false;
+    }
+    const mappedCandidate = existingToCandidateComponentNames.get(existingComponentName);
+    if (mappedCandidate !== void 0 && mappedCandidate !== candidateComponentName) {
+      return false;
+    }
+    candidateToExistingComponentNames.set(candidateComponentName, existingComponentName);
+    existingToCandidateComponentNames.set(existingComponentName, candidateComponentName);
+  }
+  const resolvedCandidate = resolveSchemaComparisonRef(candidateRef, candidateRootSchema, candidateSchemas);
+  const resolvedExisting = resolveSchemaComparisonRef(existingRef, existingRootSchema, existingSchemas);
+  if (resolvedCandidate === void 0 || resolvedExisting === void 0) {
+    return candidateRef === existingRef;
+  }
+  return areSchemasEquivalentForReuse(
+    resolvedCandidate.schema,
+    resolvedExisting.schema,
+    resolvedCandidate.rootSchema,
+    resolvedExisting.rootSchema,
+    candidateSchemas,
+    existingSchemas,
+    candidateToExistingComponentNames,
+    existingToCandidateComponentNames,
+    visited
+  );
+}
+function parseLocalDefRefName(ref) {
+  if (!ref.startsWith("#/$defs/")) {
+    return void 0;
+  }
+  return ref.slice("#/$defs/".length).split("/").map(decodeJsonPointerSegment).join("/");
+}
+function rewriteComponentSchemaRefs(schema, renameMap) {
+  return mapJsonSchemaRefs(schema, (ref) => {
+    const refName = parseLocalDefRefName(ref);
+    if (refName === void 0) {
+      return ref;
+    }
+    const renamedName = renameMap[refName];
+    if (renamedName === void 0) {
+      return ref;
+    }
+    return `#/components/schemas/${encodeJsonPointerSegment(renamedName)}`;
+  });
+}
+
+class OpenAPIGeneratorError extends TypeError {
+}
+function toOpenAPIPath(path, dynamicPathParams) {
+  if (!dynamicPathParams?.length) {
+    return path;
+  }
+  let normalized = "";
+  let currentIndex = 0;
+  for (const param of dynamicPathParams) {
+    normalized += path.slice(currentIndex, param.startIndex);
+    normalized += `{${param.parameterName}}`;
+    currentIndex = param.startIndex + param.segment.length;
+  }
+  normalized += path.slice(currentIndex);
+  return normalized;
+}
+function buildRequest(ctx, operation, def, meta, dynamicPathParams) {
+  const method = meta?.method ?? DEFAULT_OPENAPI_METHOD;
+  const inputStructure = meta?.inputStructure ?? DEFAULT_OPENAPI_INPUT_STRUCTURE;
+  if (inputStructure === "compact") {
+    const iteratorDetails = getAsyncIteratorObjectDetails(def.inputSchemas);
+    if (iteratorDetails) {
+      operation.requestBody = {
+        required: true,
+        content: toAsyncIteratorObjectContent(
+          ctx,
+          "input",
+          ctx.convertSchemas(iteratorDetails[0], "input"),
+          ctx.convertSchemas(iteratorDetails[1], "input")
+        )
+      };
+      return;
+    }
+  }
+  const dynamicParams = dynamicPathParams?.map((v) => v.parameterName);
+  const [schema, optional] = ctx.convertSchemas(def.inputSchemas, "input");
+  if (isUnconstrainedSchema(schema) && !dynamicParams?.length) {
+    return;
+  }
+  const parts = inputStructure === "compact" ? extractCompactRequestParts(schema, optional, method, dynamicParams) : extractDetailedRequestParts(schema);
+  renderPathParameters(ctx, operation, dynamicParams, parts.paramsEntries, meta?.paramsStyles);
+  renderQueryParameters(ctx, operation, parts.queryEntries, meta?.queryStyles);
+  renderHeaderParameters(ctx, operation, parts.headersEntries);
+  if (parts.bodySchema !== void 0) {
+    operation.requestBody = {
+      required: parts.bodyOptional ? void 0 : true,
+      content: toBodyContent(ctx, "input", parts.bodySchema)
+    };
+  }
+}
+function extractCompactRequestParts(schema, optional, method, dynamicParams) {
+  const entries = extractJsonObjectSchemaEntries(schema);
+  if (!entries && isBodylessMethod(method)) {
+    throw new OpenAPIGeneratorError(
+      `method is ${method} but the input schema is not an object.
+  ${method} sends every input field as a query parameter, so the input must be an object schema.
+  Fix: make the input an object, or use a method with a request body (POST, PUT, PATCH, DELETE).`
+    );
+  }
+  const paramsEntries = entries?.filter(([name]) => dynamicParams?.includes(name));
+  const restEntries = entries?.filter(([name]) => !dynamicParams?.includes(name));
+  const hasBody = !isBodylessMethod(method);
+  const bodySchema = !hasBody ? void 0 : !dynamicParams?.length ? schema : restEntries ? combineJsonObjectSchemaEntries(restEntries) : void 0;
+  return {
+    paramsEntries,
+    queryEntries: isBodylessMethod(method) ? restEntries : void 0,
+    headersEntries: void 0,
+    bodySchema,
+    bodyOptional: !dynamicParams?.length ? optional : restEntries?.every(([, , optional2]) => optional2)
+  };
+}
+function extractDetailedRequestParts(schema) {
+  const entries = extractJsonObjectSchemaEntries(schema);
+  if (!entries) {
+    throw new OpenAPIGeneratorError(
+      `inputStructure is "detailed" but the input schema is not an object.
+  Expected an object shaped like: { params?: object, query?: object, headers?: object, body?: unknown }`
+    );
+  }
+  const section = (name) => entries.find(([entryName]) => entryName === name);
+  return {
+    paramsEntries: extractJsonObjectSchemaEntries(section("params")?.[1] ?? false),
+    queryEntries: extractJsonObjectSchemaEntries(section("query")?.[1] ?? false),
+    headersEntries: extractJsonObjectSchemaEntries(section("headers")?.[1] ?? false),
+    bodySchema: section("body")?.[1],
+    bodyOptional: section("body")?.[2]
+  };
+}
+function renderPathParameters(ctx, operation, dynamicParams, paramsEntries, paramsStyles) {
+  if (!dynamicParams?.length) {
+    return;
+  }
+  if (!paramsEntries) {
+    throw new OpenAPIGeneratorError(
+      `the route declares path params (${dynamicParams.map((p) => `{${p}}`).join(", ")}) but there is no object schema to source them from.
+  compact mode:  the input schema must be an object containing each param.
+  detailed mode: the input's "params" section must be an object containing each param.`
+    );
+  }
+  for (const name of dynamicParams) {
+    const entry = paramsEntries.find(([entryName]) => entryName === name);
+    if (!entry) {
+      throw new OpenAPIGeneratorError(
+        `dynamic param "{${name}}" is missing from the input schema.
+  Route params: ${dynamicParams.map((p) => `{${p}}`).join(", ")}
+  Schema keys:  ${paramsEntries.map(([n]) => n).join(", ") || "(none)"}`
+      );
+    }
+    if (entry[2]) {
+      throw new OpenAPIGeneratorError(
+        `dynamic param "${name}" is optional in the input schema.
+  OpenAPI requires path params to be required. Make "${name}" required.`
+      );
+    }
+    const style = paramsStyles?.[name];
+    const parameter = {
+      in: "path",
+      required: true,
+      name,
+      schema: ctx.registry.toOpenAPISchema(entry[1], "input")
+    };
+    if (style === "comma-delimited-array" || style === "comma-delimited-object") {
+      parameter.style = "simple";
+      parameter.explode = false;
+    }
+    operation.parameters ??= [];
+    operation.parameters.push(parameter);
+  }
+}
+function renderQueryParameters(ctx, operation, queryEntries, queryStyles) {
+  for (const [name, schema, optional] of queryEntries ?? []) {
+    const style = queryStyles?.[name];
+    const parameter = {
+      in: "query",
+      name,
+      schema: ctx.registry.toOpenAPISchema(schema, "input"),
+      allowEmptyValue: true,
+      allowReserved: true
+    };
+    if (!optional) {
+      parameter.required = true;
+    }
+    if (style === "comma-delimited-array" || style === "comma-delimited-object") {
+      parameter.explode = false;
+    } else if (style === "pipe-delimited-array" || style === "pipe-delimited-object") {
+      parameter.style = "pipeDelimited";
+    } else if (style === "space-delimited-array" || style === "space-delimited-object") {
+      parameter.style = "spaceDelimited";
+    } else if (style === "json") {
+      parameter.content = {
+        "application/json": { schema: parameter.schema }
+      };
+      delete parameter.schema;
+    } else if (style === void 0) {
+      if (flattenJsonUnionSchema(schema).some((s) => !isJsonPrimitiveSchema(s))) {
+        const arrayable = matchArrayableJsonSchema(schema);
+        if (!arrayable || flattenJsonUnionSchema(arrayable[0]).some((s) => !isJsonPrimitiveSchema(s))) {
+          parameter.style = "deepObject";
+          parameter.explode = true;
+        }
+      }
+    } else ;
+    operation.parameters ??= [];
+    operation.parameters.push(parameter);
+  }
+}
+function renderHeaderParameters(ctx, operation, headersEntries) {
+  for (const [name, schema, optional] of headersEntries ?? []) {
+    operation.parameters ??= [];
+    operation.parameters.push({
+      in: "header",
+      name,
+      required: optional ? void 0 : true,
+      schema: ctx.registry.toOpenAPISchema(schema, "input")
+    });
+  }
+}
+function buildSuccessResponse(ctx, operation, def, meta) {
+  const status = meta?.successStatus ?? DEFAULT_SUCCESS_STATUS;
+  const description = meta?.successDescription ?? DEFAULT_OPENAPI_SUCCESS_DESCRIPTION;
+  const outputStructure = meta?.outputStructure ?? DEFAULT_OPENAPI_OUTPUT_STRUCTURE;
+  if (outputStructure === "compact") {
+    const iteratorDetails = getAsyncIteratorObjectDetails(def.outputSchemas);
+    if (iteratorDetails) {
+      operation.responses ??= {};
+      operation.responses[toResponseStatusKey(status)] = {
+        description,
+        content: toAsyncIteratorObjectContent(
+          ctx,
+          "output",
+          ctx.convertSchemas(iteratorDetails[0], "output"),
+          ctx.convertSchemas(iteratorDetails[1], "output")
+        )
+      };
+      return;
+    }
+  }
+  const [schema] = ctx.convertSchemas(def.outputSchemas, "output");
+  if (isUnconstrainedSchema(schema) || outputStructure === "compact") {
+    operation.responses ??= {};
+    operation.responses[toResponseStatusKey(status)] = {
+      description,
+      content: toBodyContent(ctx, "output", schema)
+    };
+    return;
+  }
+  for (const [responseStatus, parts] of extractDetailedResponseParts(schema, status)) {
+    const responseObject = {
+      description: parts.descriptions.length ? parts.descriptions.join(", ") : description
+    };
+    if (parts.bodies.length) {
+      responseObject.content = toBodyContent(ctx, "output", combineJsonSchemasWithComposition("anyOf", parts.bodies));
+    }
+    if (parts.headers.length) {
+      const entries = extractJsonObjectSchemaEntries(combineJsonSchemasWithComposition("anyOf", parts.headers));
+      entries?.forEach(([name, schema2, optional]) => {
+        responseObject.headers ??= {};
+        responseObject.headers[name] = {
+          required: optional ? void 0 : true,
+          schema: ctx.registry.toOpenAPISchema(schema2, "output")
+        };
+      });
+    }
+    operation.responses ??= {};
+    operation.responses[toResponseStatusKey(responseStatus)] = responseObject;
+  }
+}
+function toResponseStatusKey(status) {
+  return String(status);
+}
+function extractDetailedResponseParts(schema, defaultStatus) {
+  const partsByStatus = /* @__PURE__ */ new Map();
+  for (const item of flattenJsonUnionSchema(schema)) {
+    const entries = extractJsonObjectSchemaEntries(item);
+    if (!entries) {
+      throw new OpenAPIGeneratorError(
+        `outputStructure is "detailed" but the output schema (or one of its union members) is not an object.
+  Expected each member shaped like: { status?: number (< 400), headers?: object, body?: unknown }`
+      );
+    }
+    const statusSchema = entries.find(([name]) => name === "status")?.[1];
+    if (statusSchema !== void 0 && (typeof statusSchema !== "object" || !Number.isInteger(statusSchema.const) || statusSchema.const >= 400)) {
+      throw new OpenAPIGeneratorError(
+        `invalid "status" field in the detailed output schema.
+  Expected: a literal (const) integer below 400
+  Received: ${stringifyJSON(statusSchema)}`
+      );
+    }
+    const status = (statusSchema?.const || void 0) ?? defaultStatus;
+    let parts = partsByStatus.get(status);
+    if (!parts) {
+      parts = { descriptions: [], bodies: [], headers: [] };
+      partsByStatus.set(status, parts);
+    }
+    if (statusSchema?.description !== void 0) {
+      parts.descriptions.push(statusSchema.description);
+    }
+    const headersSchema = entries.find(([name]) => name === "headers")?.[1];
+    if (headersSchema !== void 0) {
+      parts.headers.push(headersSchema);
+    }
+    const bodySchema = entries.find(([name]) => name === "body")?.[1];
+    if (bodySchema !== void 0) {
+      parts.bodies.push(bodySchema);
+    }
+  }
+  return partsByStatus;
+}
+function buildErrorResponse(ctx, operation, def) {
+  const definitionsByStatus = /* @__PURE__ */ new Map();
+  for (const code of Object.keys(def.errorMap)) {
+    const config = def.errorMap[code];
+    if (!config) {
+      continue;
+    }
+    const status = ctx.errorStatusMap[code] ?? DEFAULT_ERROR_STATUS;
+    const [dataJsonSchema, dataOptional] = ctx.convertSchemas(config.data !== void 0 ? [config.data] : void 0, "output");
+    let definitions = definitionsByStatus.get(status);
+    if (!definitions) {
+      definitions = [];
+      definitionsByStatus.set(status, definitions);
+    }
+    definitions.push({ code, dataJsonSchema, dataOptional, defaultMessage: config.message });
+  }
+  if (!definitionsByStatus.size) {
+    return;
+  }
+  const undefinedErrorSchema = ctx.registry.register("UndefinedError", {
+    title: "UndefinedError",
+    type: "object",
+    properties: {
+      defined: { const: false },
+      code: { type: "string" },
+      message: { type: "string" },
+      data: {}
+    },
+    required: ["defined", "code", "message"]
+  });
+  for (const [status, definitions] of definitionsByStatus.entries()) {
+    const descriptions = definitions.map(({ defaultMessage }) => defaultMessage).filter((m) => m !== void 0);
+    const customBodySchema = value(
+      ctx.customErrorResponseBodySchema,
+      definitions.map((def2) => ({ ...def2, dataJsonSchema: ctx.registry.hoistDefs(def2.dataJsonSchema, "output") })),
+      status
+    );
+    const responseSchema = customBodySchema ?? combineJsonSchemasWithComposition("oneOf", [
+      ...definitions.map(({ code, dataJsonSchema, dataOptional }) => {
+        return ctx.registry.register(toErrorComponentName(code), {
+          title: code,
+          ...combineJsonObjectSchemaEntries([
+            ["defined", { const: true }, false],
+            ["code", { const: code }, false],
+            // avoid using the defaultMessage here to improve component reusability
+            ["message", { type: "string" }, false],
+            ["data", ctx.registry.hoistDefs(dataJsonSchema, "output"), dataOptional]
+          ])
+        });
+      }),
+      undefinedErrorSchema
+    ]);
+    operation.responses ??= {};
+    operation.responses[toResponseStatusKey(status)] = {
+      description: descriptions.length ? descriptions.join(", ") : status.toString(),
+      content: {
+        "application/json": {
+          schema: ctx.registry.toOpenAPISchema(responseSchema, "output")
+        }
+      }
+    };
+  }
+}
+function toErrorComponentName(code) {
+  const name = code.split(/[^a-z0-9]+/i).filter(Boolean).map((part) => {
+    const rest = part.slice(1);
+    return part.charAt(0).toUpperCase() + (rest === rest.toUpperCase() ? rest.toLowerCase() : rest);
+  }).join("");
+  return name || "Error";
+}
+function getAsyncIteratorObjectDetails(schemas) {
+  if (!schemas || schemas.length === 0) {
+    return void 0;
+  }
+  const yieldSchemas = [];
+  const returnSchemas = [];
+  for (const s of schemas) {
+    const details = getAsyncIteratorObjectSchemaDetails(s);
+    if (!details) {
+      return void 0;
+    }
+    yieldSchemas.push(details.yieldSchema);
+    if (details.returnSchema) {
+      returnSchemas.push(details.returnSchema);
+    }
+  }
+  return [yieldSchemas, returnSchemas];
+}
+function toAsyncIteratorObjectContent(ctx, direction, [yieldSchema, yieldOptional], [returnSchema, returnOptional]) {
+  const schema = combineJsonSchemasWithComposition("oneOf", [
+    combineJsonObjectSchemaEntries([
+      ["event", { const: "message" }, false],
+      ["data", yieldSchema, yieldOptional],
+      ["id", { type: "string" }, true],
+      ["retry", { type: "number" }, true]
+    ]),
+    combineJsonObjectSchemaEntries([
+      ["event", { const: "close" }, false],
+      ["data", returnSchema, returnOptional],
+      ["id", { type: "string" }, true],
+      ["retry", { type: "number" }, true]
+    ]),
+    {
+      type: "object",
+      properties: {
+        event: { const: "error" },
+        data: {},
+        id: { type: "string" },
+        retry: { type: "number" }
+      },
+      required: ["event"]
+    }
+  ]);
+  return {
+    "text/event-stream": {
+      schema: ctx.registry.toOpenAPISchema(schema, direction)
+    }
+  };
+}
+function toBodyContent(ctx, direction, schema) {
+  const fileSchemasByMediaType = /* @__PURE__ */ new Map();
+  const rest = flattenJsonUnionSchema(schema).filter((s) => {
+    if (!isJsonFileSchema(s)) {
+      return !isUnconstrainedSchema(s);
+    }
+    const contentMediaType = s.contentMediaType ?? "*/*";
+    const schemas = fileSchemasByMediaType.get(contentMediaType);
+    if (schemas) {
+      schemas.push(s);
+    } else {
+      fileSchemasByMediaType.set(contentMediaType, [s]);
+    }
+    return false;
+  });
+  const content = {};
+  if (rest.length > 0) {
+    const restSchema = fileSchemasByMediaType.size ? combineJsonSchemasWithComposition("anyOf", rest) : schema;
+    const hasNestedFiles = findDeepMatches(
+      (v) => isPlainObject(v) && isJsonFileSchema(v),
+      restSchema
+    ).values.length > 0;
+    const contentType = hasNestedFiles ? "multipart/form-data" : "application/json";
+    const fileSchemas = fileSchemasByMediaType.get(contentType);
+    fileSchemasByMediaType.delete(contentType);
+    content[contentType] = {
+      schema: ctx.registry.toOpenAPISchema(combineJsonSchemasWithComposition("anyOf", [restSchema, ...fileSchemas ?? []]), direction)
+    };
+  }
+  for (const [contentType, schemas] of fileSchemasByMediaType.entries()) {
+    content[contentType] = {
+      schema: ctx.registry.toOpenAPISchema(combineJsonSchemasWithComposition("anyOf", schemas), direction)
+    };
+  }
+  return content;
+}
+
+class OpenAPIGenerator {
+  serializer;
+  converter;
+  constructor(options = {}) {
+    this.serializer = options.serializer ?? new OpenAPISerializer();
+    this.converter = new DelegatingJsonSchemaConverter([
+      ...toArray(options.converters),
+      new StandardJsonSchemaConverter()
+    ]);
+  }
+  async generate(router, options = {}) {
+    const version = options.version ?? "3.2.0";
+    const doc = {
+      ...clone(options.base),
+      openapi: "3.2.0",
+      info: options.base?.info ?? { title: "API Reference", version: "0.0.0" }
+    };
+    const ctx = {
+      registry: new OpenAPIComponentRegistry(doc, options.customComponentName),
+      convertSchemas: (schemas, direction) => this.convertSchemas(schemas, direction),
+      errorStatusMap: options.errorStatusMap ?? COMMON_ERROR_STATUS_MAP,
+      customErrorResponseBodySchema: options.customErrorResponseBodySchema
+    };
+    const errors = [];
+    await walkProcedureContractsAsync(router, (contract, path) => {
+      if (value(options.filter, contract, path) === false) {
+        return;
+      }
+      try {
+        const def = contract["~orpc"];
+        const meta = getOpenAPIMeta(contract);
+        const method = (meta?.method ?? DEFAULT_OPENAPI_METHOD).toLowerCase();
+        if (method === "query" && !version.startsWith("3.2.")) {
+          throw new OpenAPIGeneratorError(
+            `QUERY operations require OpenAPI 3.2, but version "${version}" was requested.`
+          );
+        }
+        const postPath = meta?.path ?? pathToHttpPath(path);
+        const httpPath = meta?.prefix ? mergeHttpPath(meta.prefix, postPath) : postPath;
+        const dynamicPathParams = getDynamicPathParams(httpPath);
+        const openApiPath = toOpenAPIPath(httpPath, dynamicPathParams);
+        let operation;
+        if (meta?.spec !== void 0 && typeof meta.spec !== "function") {
+          operation = meta.spec;
+        } else {
+          operation = {
+            operationId: meta?.operationId ?? path.join("."),
+            summary: meta?.summary,
+            description: meta?.description,
+            deprecated: meta?.deprecated,
+            tags: meta?.tags?.map((tag) => tag)
+          };
+          buildRequest(ctx, operation, def, meta, dynamicPathParams);
+          buildSuccessResponse(ctx, operation, def, meta);
+          buildErrorResponse(ctx, operation, def);
+        }
+        if (typeof meta?.spec === "function") {
+          operation = meta.spec(operation);
+        }
+        doc.paths ??= {};
+        doc.paths[openApiPath] ??= {};
+        doc.paths[openApiPath][method] = operation;
+      } catch (e) {
+        if (!(e instanceof OpenAPIGeneratorError)) {
+          throw e;
+        }
+        errors.push(`Procedure at ${path.join(".") || "(root)"}: ${e.message}`);
+      }
+    });
+    if (errors.length) {
+      throw new OpenAPIGeneratorError(
+        `[OpenAPIGenerator] Failed to generate the OpenAPI document (${errors.length} error${errors.length === 1 ? "" : "s"}):
+
+${errors.join("\n\n")}`
+      );
+    }
+    const versioned = toVersionedOpenAPIDocument(doc, version);
+    return this.serializer.serialize(versioned, { asFormData: false, useFormDataForBlobFields: false });
+  }
+  convertSchema(schema, direction) {
+    const [jsonSchema, optional] = this.converter.convert(schema, direction);
+    return [strip$schemaField(jsonSchema), optional];
+  }
+  convertSchemas(schemas, direction) {
+    if (!schemas || schemas.length <= 1) {
+      return this.convertSchema(schemas?.[0], direction);
+    }
+    const results = schemas.map((s) => this.convertSchema(s, direction));
+    return [
+      combineJsonSchemasWithComposition("allOf", results.map(([jsonSchema]) => jsonSchema)),
+      results.every(([, optional]) => optional)
+    ];
+  }
+}
+function toVersionedOpenAPIDocument(doc, version) {
+  const downgraded = version.startsWith("3.2.") ? doc : version.startsWith("3.1.") ? downgradeSpecV32ToV31(doc) : downgradeSpecV31ToV30(downgradeSpecV32ToV31(doc));
+  return { ...downgraded, openapi: version };
+}
+function strip$schemaField(schema) {
+  if (typeof schema !== "object") {
+    return schema;
+  }
+  const { $schema, ...rest } = schema;
+  return rest;
+}
+
+function populateRouterContractOpenAPIPaths(router, options = {}) {
+  const path = toArray(options.path);
+  if (router instanceof ProcedureContract) {
+    if (getOpenAPIMeta(router)?.path !== void 0) {
+      return router;
+    }
+    const [meta, metaPlugins] = resolveMetaPlugins(
+      router["~orpc"].meta,
+      router["~orpc"].metaPlugins,
+      [openapi({ path: pathToHttpPath(path) })]
+    );
+    return new ProcedureContract({
+      ...router["~orpc"],
+      meta,
+      metaPlugins
+    });
+  }
+  if (!isTypescriptObject(router)) {
+    return router;
+  }
+  const populated = {};
+  for (const key of Object.keys(router)) {
+    populated[key] = populateRouterContractOpenAPIPaths(
+      router[key],
+      { ...options, path: [...path, key] }
+    );
+  }
+  return populated;
+}
+
+export { DEFAULT_OPENAPI_INPUT_STRUCTURE, DEFAULT_OPENAPI_METHOD, DEFAULT_OPENAPI_OUTPUT_STRUCTURE, DEFAULT_OPENAPI_SUCCESS_DESCRIPTION, OpenAPIGenerator, OpenAPIGeneratorError, OpenAPISerializer, createContractJsonifiedClientFactory, getDynamicPathParams, getOpenAPIMeta, isBodylessMethod, openapi, populateRouterContractOpenAPIPaths };

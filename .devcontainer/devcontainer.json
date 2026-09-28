@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
+  "name": "Tavi",
+  // Matches the `engines` floor in package.json and the node:22 base image in
+  // apps/*/Dockerfile, so the container and CI agree on the runtime.
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "features": {
+    // The local stack needs PostgreSQL and S3-compatible storage:
+    // `docker compose -f compose.local.yml up -d postgres storage`. Compose
+    // runs inside the container, so the daemon has to be available here.
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["oxc.oxc-vscode", "bradlc.vscode-tailwindcss"]
+    }
+  },
+  // `pnpm install` also installs the Lefthook git hooks from the `prepare`
+  // script. Migrations are not applied here: they need the database to be up.
+  "postCreateCommand": "pnpm install",
+  "forwardPorts": [1337, 5173, 8080, 5432, 9002],
+  "portsAttributes": {
+    "1337": { "label": "API" },
+    "5173": { "label": "Web" },
+    "8080": { "label": "Bundled stack (nginx)" },
+    "5432": { "label": "PostgreSQL" },
+    "9002": { "label": "Object storage (s3mock)" }
+  },
+  "remoteUser": "node"
+}

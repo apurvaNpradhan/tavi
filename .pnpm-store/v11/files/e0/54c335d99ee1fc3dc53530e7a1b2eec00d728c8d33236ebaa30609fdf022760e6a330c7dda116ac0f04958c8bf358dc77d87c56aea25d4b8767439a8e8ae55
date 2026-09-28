@@ -1,0 +1,255 @@
+import { OpenAPIV3_2 } from '@openapi-spec/types';
+import { AnySchema, RouterContract } from '@orpc/contract';
+export { AnySchema, Schema } from '@orpc/contract';
+import { Context } from '@orpc/server';
+import { StandardHandlerPlugin, StandardHandlerOptions } from '@orpc/server/standard';
+import { ClientContext } from '@orpc/client';
+import { StandardLinkPlugin, StandardLinkOptions } from '@orpc/client/standard';
+import { StandardJSONSchemaV1 } from '@standard-schema/spec';
+
+/**
+ * A JSON Schema (draft 2020-12) representation used across oRPC's JSON schema tooling.
+ *
+ * @remarks
+ * It is also the OpenAPI 3.2 Schema Object, so converted schemas embed into OpenAPI documents as-is.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/standard-schema | Standard Schema Integration}
+ */
+type JsonSchema<Value = any> = OpenAPIV3_2.SchemaObject<Value>;
+/**
+ * The declared JSON Schema keywords, the index signature is filtered out.
+ */
+type JsonSchemaKeywords = keyof {
+    [K in keyof OpenAPIV3_2.SchemaObjectFields as string extends K ? never : K]: unknown;
+};
+declare enum JsonSchemaType {
+    Array = "array",
+    Boolean = "boolean",
+    Integer = "integer",
+    Null = "null",
+    Number = "number",
+    Object = "object",
+    String = "string"
+}
+declare enum JsonSchemaFormat {
+    Date = "date",
+    DateTime = "date-time",
+    Duration = "duration",
+    Email = "email",
+    Hostname = "hostname",
+    IDNEmail = "idn-email",
+    IDNHostname = "idn-hostname",
+    IPv4 = "ipv4",
+    IPv6 = "ipv6",
+    IRI = "iri",
+    IRIReference = "iri-reference",
+    JSONPointer = "json-pointer",
+    RegEx = "regex",
+    RelativeJSONPointer = "relative-json-pointer",
+    Time = "time",
+    URI = "uri",
+    URIReference = "uri-reference",
+    URITemplate = "uri-template",
+    UUID = "uuid"
+}
+declare enum JsonSchemaXNativeType {
+    BigInt = "bigint",
+    Date = "date",
+    Url = "url",
+    Set = "set",
+    Map = "map"
+}
+
+declare class JsonSchemaCoercer {
+    coerce([schema, optional]: [schema: JsonSchema, optional: boolean], value: unknown): unknown;
+    private coerceInternal;
+}
+
+/**
+ * These utilities assume the schema has only one root-level `$defs` object
+ * and exclusively use absolute JSON pointers for `$ref` values.
+ */
+
+declare function isJsonPrimitiveSchema(schema: JsonSchema): schema is JsonSchema & object;
+type JsonFileSchema = JsonSchema & object & {
+    type: 'string';
+    contentMediaType?: string;
+};
+/**
+ * Returns true when the schema is a file-like string schema.
+ */
+declare function isJsonFileSchema(schema: JsonSchema): schema is JsonFileSchema;
+type JsonObjectSchema = JsonSchema & object & {
+    type: 'object';
+};
+/**
+ * Returns true when the schema is an object schema.
+ */
+declare function isJsonObjectSchema(schema: JsonSchema): schema is JsonObjectSchema;
+type JsonArraySchema = JsonSchema & object & {
+    type: 'array';
+};
+/**
+ * Returns true when the schema is an array schema.
+ */
+declare function isJsonArraySchema(schema: JsonSchema): schema is JsonArraySchema;
+/**
+ * Returns true when the schema does not apply any recognized constraints.
+ */
+declare function isUnconstrainedSchema(schema: JsonSchema): boolean;
+/**
+ * Ensures a JSON Schema is represented as an object schema document.
+ */
+declare function ensureJsonSchemaObject(schema: JsonSchema): Exclude<JsonSchema, boolean>;
+
+/**
+ * These utilities assume the schema has only one root-level `$defs` object
+ * and exclusively use absolute JSON pointers for `$ref` values.
+ */
+
+/**
+ * Combines multiple schemas under the requested composition keyword, promoting branch `$defs` to the root.
+ */
+declare function combineJsonSchemasWithComposition(keyword: 'allOf' | 'anyOf' | 'oneOf', schemas: JsonSchema[]): JsonSchema;
+type JsonObjectSchemaEntry = [name: string, schema: JsonSchema, optional: boolean];
+/**
+ * Combines object property entries back into a single object schema.
+ */
+declare function combineJsonObjectSchemaEntries(entries: JsonObjectSchemaEntry[]): JsonObjectSchema;
+/**
+ * Parses an object schema, or a composition of object schemas, into property entries.
+ */
+declare function extractJsonObjectSchemaEntries(schema: JsonSchema): JsonObjectSchemaEntry[] | undefined;
+/**
+ * Flattens `anyOf` and `oneOf` unions when they are the only active constraints.
+ */
+declare function flattenJsonUnionSchema(schema: JsonSchema): JsonSchema[];
+/**
+ * Matches a union made of a single item schema and its array form.
+ */
+declare function matchArrayableJsonSchema(schema: JsonSchema): undefined | [itemSchema: JsonSchema, arraySchema: JsonArraySchema];
+declare function deduplicateJsonSchemas(schemas: JsonSchema[]): JsonSchema[];
+
+/**
+ * The conversion direction: `input` targets the schema's input type, `output` targets its output type.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/standard-schema | Standard Schema Integration}
+ */
+type JsonSchemaConverterDirection = 'input' | 'output';
+/**
+ * Interface for converting validation schemas into JSON Schema representations,
+ * used by tools such as the OpenAPI Generator and Smart Coercion plugins.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/standard-schema | Standard Schema Integration}
+ */
+interface JsonSchemaConverter {
+    /**
+     * Determines whether this converter can handle the given schema.
+     */
+    condition(schema: AnySchema | undefined, direction: JsonSchemaConverterDirection): boolean;
+    /**
+     * Converts an ORPC schema to a JSON Schema representation.
+     */
+    convert(schema: AnySchema | undefined, direction: JsonSchemaConverterDirection): [jsonSchema: JsonSchema, optional: boolean];
+}
+declare class DelegatingJsonSchemaConverter implements Pick<JsonSchemaConverter, 'convert'> {
+    private readonly converters;
+    constructor(converters?: JsonSchemaConverter[]);
+    convert(schema: AnySchema | undefined, direction: JsonSchemaConverterDirection): [jsonSchema: JsonSchema, optional: boolean];
+}
+
+/**
+ * These utilities assume the schema has only one root-level `$defs` object
+ * and exclusively use absolute JSON pointers for `$ref` values.
+ */
+
+/**
+ * Encodes a JSON Pointer segment according to RFC 6901.
+ *
+ * https://datatracker.ietf.org/doc/html/rfc6901
+ */
+declare function encodeJsonPointerSegment(segment: string): string;
+/**
+ * Decodes a JSON Pointer segment according to RFC 6901.
+ *
+ * https://datatracker.ietf.org/doc/html/rfc6901
+ */
+declare function decodeJsonPointerSegment(segment: string): string;
+/**
+ * Visits every `$ref` in a schema, traversing the same keywords as {@link mapJsonSchemaRefs}.
+ * Shared or cyclic object instances are visited once.
+ */
+declare function visitJsonSchemaRefs(value: JsonSchema, visit: (ref: string) => void, schemaLevel?: boolean, seen?: Set<object>): void;
+declare function mapJsonSchemaRefs(value: JsonSchema, map: (ref: string, path: Array<string | number>) => string, schemaLevel?: boolean, path?: Array<string | number>): JsonSchema;
+/**
+ * Rewrites recursive root `#` refs by moving the schema body into `$defs`.
+ */
+declare function hoistRecursiveRefToDef(schema: JsonSchema): JsonSchema;
+/**
+ * Resolves a local `$ref` at the **root level** of the given schema, if present.
+ *
+ * Only handles refs of the form `#/$defs/<name>` pointing into the provided
+ * (or schema-embedded) `$defs` map. Nested `$ref`s inside sub-schemas are
+ * intentionally left untouched.
+ *
+ * If the ref cannot be resolved (missing `$defs`, unknown key, etc.) the
+ * schema is returned as-is.
+ *
+ * @param schema - The schema whose root-level `$ref` should be resolved.
+ * @param $defs - Definition map to resolve against. If omitted, falls back to
+ *   `schema.$defs`. When provided, takes precedence over any `$defs` embedded
+ *   in the schema.
+ */
+declare function resolveJsonSchemaRootLocalRef(schema: JsonSchema, $defs?: Exclude<JsonSchema, boolean>['$defs']): JsonSchema;
+
+interface SmartCoercionHandlerPluginOptions {
+    converters?: undefined | JsonSchemaConverter[];
+}
+/**
+ * Coerces incoming request data to match the expected `.input` schema types before validation,
+ * based on JSON schemas produced by the configured converters.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/smart-coercion | Smart Coercion Plugin}
+ */
+declare class SmartCoercionHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    private readonly converter;
+    private readonly coercer;
+    private readonly cache;
+    constructor(options?: SmartCoercionHandlerPluginOptions);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+    private coerceValue;
+}
+
+interface SmartCoercionLinkPluginOptions {
+    converters?: undefined | JsonSchemaConverter[];
+}
+/**
+ * Coerces server responses to match the expected `.output` or `.errors` schema types before validation,
+ * based on JSON schemas produced by the configured converters.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/smart-coercion | Smart Coercion Plugin}
+ */
+declare class SmartCoercionLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    private readonly contract;
+    name: string;
+    /**
+     * Output and error values should be coerced before validation.
+     */
+    after: string[];
+    private readonly converter;
+    private readonly coercer;
+    private readonly cache;
+    constructor(contract: RouterContract, options?: SmartCoercionLinkPluginOptions);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+    private coerceValue;
+}
+
+declare class StandardJsonSchemaConverter implements JsonSchemaConverter {
+    condition(schema: AnySchema | undefined, _direction: JsonSchemaConverterDirection): boolean;
+    convert(schema: AnySchema | undefined, direction: JsonSchemaConverterDirection): [jsonSchema: JsonSchema, optional: boolean];
+    convertInternal(schema: StandardJSONSchemaV1 & AnySchema, direction: JsonSchemaConverterDirection): [jsonSchema: JsonSchema, optional: boolean];
+}
+
+export { DelegatingJsonSchemaConverter, JsonSchemaCoercer, JsonSchemaFormat, JsonSchemaType, JsonSchemaXNativeType, SmartCoercionHandlerPlugin, SmartCoercionLinkPlugin, StandardJsonSchemaConverter, combineJsonObjectSchemaEntries, combineJsonSchemasWithComposition, decodeJsonPointerSegment, deduplicateJsonSchemas, encodeJsonPointerSegment, ensureJsonSchemaObject, extractJsonObjectSchemaEntries, flattenJsonUnionSchema, hoistRecursiveRefToDef, isJsonArraySchema, isJsonFileSchema, isJsonObjectSchema, isJsonPrimitiveSchema, isUnconstrainedSchema, mapJsonSchemaRefs, matchArrayableJsonSchema, resolveJsonSchemaRootLocalRef, visitJsonSchemaRefs };
+export type { JsonArraySchema, JsonFileSchema, JsonObjectSchema, JsonObjectSchemaEntry, JsonSchema, JsonSchemaConverter, JsonSchemaConverterDirection, JsonSchemaKeywords, SmartCoercionHandlerPluginOptions, SmartCoercionLinkPluginOptions };

@@ -1,0 +1,47 @@
+import { ClientContext } from '@orpc/client';
+import { StandardLinkPlugin, StandardLinkOptions } from '@orpc/client/standard';
+import { RouterContract } from '../index.js';
+import '@orpc/shared';
+import '@standard-schema/spec';
+
+interface RequestValidationLinkPluginOptions<_T extends ClientContext> {
+    /**
+     * Forwards the locally validated/transformed input downstream.
+     *
+     * Disabled by default because some schema transforms produce a locally valid
+     * value that cannot be validated successfully again by the server.
+     * Keeping the original input as the flow input is the safer default.
+     *
+     * @default false
+     */
+    forwardValidatedInput?: boolean | undefined;
+}
+/**
+ * Validates client request input against contract schemas before the request is encoded.
+ * This is useful when your application relies on server-side validation.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/request-validation | Request Validation Plugin}
+ */
+declare class RequestValidationLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    private readonly contract;
+    name: string;
+    private readonly forwardValidatedInput;
+    constructor(contract: RouterContract, options?: RequestValidationLinkPluginOptions<T>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+/**
+ * Validates server responses against contract schemas before your application uses them.
+ * This helps ensure the data returned by the server matches the types defined in your contract.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/response-validation | Response Validation Plugin}
+ */
+declare class ResponseValidationLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    private readonly contract;
+    name: string;
+    constructor(contract: RouterContract);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+export { RequestValidationLinkPlugin, RequestValidationLinkPlugin as RequestValidationPlugin, ResponseValidationLinkPlugin, ResponseValidationLinkPlugin as ResponseValidationPlugin };
+export type { RequestValidationLinkPluginOptions };

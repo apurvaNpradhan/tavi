@@ -1,0 +1,6 @@
+import { Signal } from 'solid-js';
+interface A11yIssueListProps {
+    selectedIssueSignal: Signal<string>;
+}
+export declare function A11yIssueList(props: A11yIssueListProps): import("solid-js").JSX.Element;
+export {};

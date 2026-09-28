@@ -1,0 +1,5 @@
+import { ClassType } from './class.js';
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+export interface DevtoolsPanelProps extends TanStackDevtoolsPluginProps {
+}
+export declare function createSolidPanel<TComponentProps extends DevtoolsPanelProps>(CoreClass: ClassType): readonly [(props: TComponentProps) => import("solid-js").JSX.Element, (_props: TComponentProps) => import("solid-js").JSX.Element];

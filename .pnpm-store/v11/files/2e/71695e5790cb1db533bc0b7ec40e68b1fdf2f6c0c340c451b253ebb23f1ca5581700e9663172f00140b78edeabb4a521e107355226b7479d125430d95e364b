@@ -1,0 +1,104 @@
+export { __mountComponent } from './chunk/7TSS377A.js';
+import { use, createComponent, template } from 'solid-js/web';
+import { createSignal, onMount, onCleanup } from 'solid-js';
+
+// src/solid/class.ts
+function constructCoreClass(importFn) {
+  class DevtoolsCore {
+    #isMounted = false;
+    #isMounting = false;
+    #abortMount = false;
+    #dispose;
+    constructor() {
+    }
+    async mount(el, props) {
+      if (this.#isMounted || this.#isMounting) {
+        throw new Error("Devtools is already mounted");
+      }
+      this.#isMounting = true;
+      this.#abortMount = false;
+      try {
+        const { __mountComponent: __mountComponent2 } = await import('./class-mount-impl/VN5QTPB3.js');
+        if (this.#abortMount) {
+          this.#isMounting = false;
+          return;
+        }
+        this.#dispose = __mountComponent2(el, props, importFn);
+        this.#isMounted = true;
+        this.#isMounting = false;
+      } catch (err) {
+        this.#isMounting = false;
+        console.error("[TanStack Devtools] Failed to load:", err);
+      }
+    }
+    unmount() {
+      if (!this.#isMounted && !this.#isMounting) {
+        throw new Error("Devtools is not mounted");
+      }
+      if (this.#isMounting) {
+        this.#abortMount = true;
+        this.#isMounting = false;
+        return;
+      }
+      this.#dispose?.();
+      this.#isMounted = false;
+    }
+  }
+  class NoOpDevtoolsCore extends DevtoolsCore {
+    constructor() {
+      super();
+    }
+    async mount(_el, _props) {
+    }
+    unmount() {
+    }
+  }
+  return [DevtoolsCore, NoOpDevtoolsCore];
+}
+var _tmpl$ = /* @__PURE__ */ template(`<div style=height:100%>`);
+function createSolidPanel(CoreClass) {
+  function Panel(props) {
+    let devToolRef;
+    const [devtools] = createSignal(new CoreClass());
+    onMount(() => {
+      if (devToolRef) {
+        devtools().mount(devToolRef, props);
+      }
+      onCleanup(() => {
+        devtools().unmount();
+      });
+    });
+    return (() => {
+      var _el$ = _tmpl$();
+      var _ref$ = devToolRef;
+      typeof _ref$ === "function" ? use(_ref$, _el$) : devToolRef = _el$;
+      return _el$;
+    })();
+  }
+  function NoOpPanel(_props) {
+    return [];
+  }
+  return [Panel, NoOpPanel];
+}
+function createSolidPlugin({
+  Component,
+  ...config
+}) {
+  function Plugin() {
+    return {
+      ...config,
+      render: (_el, props) => {
+        return createComponent(Component, props);
+      }
+    };
+  }
+  function NoOpPlugin() {
+    return {
+      ...config,
+      render: (_el, _props) => []
+    };
+  }
+  return [Plugin, NoOpPlugin];
+}
+
+export { constructCoreClass, createSolidPanel, createSolidPlugin };

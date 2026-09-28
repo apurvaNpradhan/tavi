@@ -1,0 +1,363 @@
+import { Value, Promisable } from '@orpc/shared';
+import { StandardUrl, StandardHeaders, StandardRequest, StandardLazyResponse } from '@standard-server/core';
+import { ClientContext } from '../index.js';
+import { StandardLinkPlugin, StandardLinkTransportInterceptorOptions, StandardLinkOptions, StandardLinkInterceptorOptions } from '../adapters/standard/index.js';
+
+type BatchLinkPluginMode = 'streaming' | 'buffered';
+interface BatchLinkPluginGroup<T extends ClientContext> {
+    /**
+     * Determines whether a request should be included in this batch group.
+     * Requests will be evaluated against each group's condition in order,
+     * and included in the first group whose condition returns true.
+     * If no group's condition returns true, the request will not be batched.
+     */
+    condition: Value<boolean, [options: StandardLinkTransportInterceptorOptions<T>]>;
+    /**
+     * The client context applied to requests in this batch group for the remainder of the link chain.
+     */
+    context: Value<T, [items: [StandardLinkTransportInterceptorOptions<T>, ...StandardLinkTransportInterceptorOptions<T>[]]]>;
+    /**
+     * The path segments applied to requests in this batch group for the remainder of the link chain.
+     *
+     * @default []
+     */
+    path?: Value<string[], [items: [StandardLinkTransportInterceptorOptions<T>, ...StandardLinkTransportInterceptorOptions<T>[]]]>;
+}
+interface BatchLinkPluginOptions<T extends ClientContext> {
+    groups: [BatchLinkPluginGroup<T>, ...BatchLinkPluginGroup<T>[]];
+    /**
+     * Filters requests to batch.
+     *
+     * @default () => true
+     */
+    filter?: Value<boolean, [options: StandardLinkTransportInterceptorOptions<T>]>;
+    /**
+     * The maximum number of requests in the batch.
+     *
+     * @default 10
+     */
+    maxSize?: Value<Promisable<number>, [subOptionsList: [StandardLinkTransportInterceptorOptions<T>, ...StandardLinkTransportInterceptorOptions<T>[]]]>;
+    /**
+     * The batch response mode.
+     *
+     * @default 'streaming'
+     */
+    mode?: Value<BatchLinkPluginMode, [subOptionsList: [StandardLinkTransportInterceptorOptions<T>, ...StandardLinkTransportInterceptorOptions<T>[]]]>;
+    /**
+     * URL for the batch request.
+     *
+     * @default URL of the first subrequest in the batch + '/__batch__'
+     */
+    url?: Value<Promisable<StandardUrl>, [subOptionsList: [StandardLinkTransportInterceptorOptions<T>, ...StandardLinkTransportInterceptorOptions<T>[]]]>;
+    /**
+     * The maximum length of the URL that runtime supports,
+     * if exceeded, the batch will be split into smaller batches and sent sequentially.
+     *
+     * This only applies to GET batch requests where the batch data is sent via URL query parameter.
+     *
+     * @default 2083
+     */
+    maxUrlLength?: Value<Promisable<number>, [subOptionsList: [StandardLinkTransportInterceptorOptions<T>, ...StandardLinkTransportInterceptorOptions<T>[]]]>;
+    /**
+     * Headers used for the batch request.
+     *
+     * @default Common headers among all subrequests in the batch.
+     */
+    headers?: Value<Promisable<StandardHeaders>, [subOptionsList: [StandardLinkTransportInterceptorOptions<T>, ...StandardLinkTransportInterceptorOptions<T>[]]]>;
+    /**
+     * Map each subrequest in the batch before it is sent.
+     *
+     * @default Removes headers that are duplicated with the batch headers
+     */
+    mapSubrequest?: (subOptions: StandardLinkTransportInterceptorOptions<T>, partialBatchRequest: Pick<StandardRequest, 'url' | 'headers'>) => StandardRequest;
+    /**
+     * Maps each subresponse before returning the final response.
+     *
+     * @default Low-priority merges headers from the batch response into each subresponse.
+     */
+    mapSubresponse?: (subResponse: StandardLazyResponse, batchResponse: StandardLazyResponse, subOptions: StandardLinkTransportInterceptorOptions<T>) => StandardLazyResponse;
+}
+/**
+ * Combines multiple client requests into a single batch request
+ * and splits the batch response back into individual responses.
+ *
+ * @remarks
+ * **Note**: HTTP/2 and later already multiplex requests over a single connection, so this plugin is often less useful than it once was.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/batch | Batch Plugin}
+ */
+declare class BatchLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    name: string;
+    private readonly groups;
+    private readonly filter;
+    private readonly maxSize;
+    private readonly mode;
+    private readonly batchUrl;
+    private readonly maxUrlLength;
+    private readonly batchHeaders;
+    private readonly mapSubrequest;
+    private readonly mapSubresponse;
+    private readonly queue;
+    constructor(options: NoInfer<BatchLinkPluginOptions<T>>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+    private processPendingBatches;
+    private executeBatch;
+}
+
+interface DedupeLinkPluginGroup<T extends ClientContext> {
+    condition: Value<boolean, [options: StandardLinkTransportInterceptorOptions<T>]>;
+    /**
+     * The context used for the rest of the request lifecycle.
+     */
+    context: Value<T, [
+        items: [
+            StandardLinkTransportInterceptorOptions<T>,
+            StandardLinkTransportInterceptorOptions<T>,
+            ...StandardLinkTransportInterceptorOptions<T>[]
+        ]
+    ]>;
+}
+interface DedupeLinkPluginOptions<T extends ClientContext> {
+    /**
+     * To enable deduplication, a request must match at least one defined group.
+     * Requests that fall into the same group are considered for deduplication together.
+     */
+    groups: [DedupeLinkPluginGroup<T>, ...DedupeLinkPluginGroup<T>[]];
+    /**
+     * Filters requests to dedupe.
+     *
+     * @default ({ request }) => request.method === 'GET' || request.method === 'QUERY'
+     */
+    filter?: Value<boolean, [options: StandardLinkTransportInterceptorOptions<T>]>;
+}
+/**
+ * Prevents redundant requests by deduplicating similar in-flight requests,
+ * reducing the number of requests sent to the server.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/dedupe | Dedupe Plugin}
+ */
+declare class DedupeLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    name: string;
+    before: string[];
+    private readonly groups;
+    private readonly filter;
+    private readonly queue;
+    constructor(options: NoInfer<DedupeLinkPluginOptions<T>>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+    private enqueue;
+    private processPendingRequests;
+    private execute;
+}
+
+interface RequestCompressionLinkPluginOptions<T extends ClientContext> {
+    /**
+     * The compression scheme to use for request compression.
+     *
+     * @default 'gzip'
+     */
+    encoding?: 'gzip' | 'deflate' | 'deflate-raw';
+    /**
+     * The minimum request size in bytes required to trigger compression.
+     * Requests smaller than this threshold will not be compressed to avoid overhead.
+     * If the request size cannot be determined, compression will still be applied.
+     *
+     * @default 1024 (1KB)
+     */
+    threshold?: number;
+    /**
+     * Determines whether a request with the given Content-Type should be compressed.
+     * Only consulted for binary transfers (streams, files, and file form-data parts).
+     * Also receives the transport interceptor options for per-request decisions.
+     *
+     * @default isCompressibleContentType (covers common text-based formats)
+     */
+    isCompressibleContentType?: (contentType: string | null | undefined, options: StandardLinkTransportInterceptorOptions<T>) => boolean;
+}
+/**
+ * Compresses request bodies before sending them to the server,
+ * reducing bandwidth usage for large payloads.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/request-compression | Request Compression Plugin}
+ */
+declare class RequestCompressionLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    name: string;
+    /**
+     * Compression should be done after batching, to compress the final request
+     */
+    after: string[];
+    private readonly encoding;
+    private readonly threshold;
+    private readonly isCompressibleContentType;
+    constructor(options?: RequestCompressionLinkPluginOptions<T>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+interface ResponseCompressionLinkPluginOptions<_T extends ClientContext> {
+    /**
+     * Compression schemes to advertise via Accept-Encoding, in preference order.
+     * Only schemes that can be decompressed by this plugin should be listed.
+     *
+     * @default ['gzip', 'deflate']
+     */
+    encodings?: readonly ('gzip' | 'deflate' | 'deflate-raw')[];
+}
+/**
+ * Advertises Accept-Encoding on requests and decompresses response bodies
+ * based on the Content-Encoding header. Works at the standard link level,
+ * so it supports all adapters.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/response-compression | Response Compression Plugin}
+ */
+declare class ResponseCompressionLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    name: string;
+    /**
+     * Decompression should wrap the final batch response instead of sub-responses.
+     */
+    after: string[];
+    private readonly encodings;
+    constructor(options?: ResponseCompressionLinkPluginOptions<T>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+interface RetryLinkPluginAttemptOptions<T extends RetryLinkPluginContext> extends StandardLinkInterceptorOptions<T> {
+    /**
+     * Latest retry delay advertised by the server via event metadata.
+     */
+    lastEventRetry: number | undefined;
+    /**
+     * Current retry attempt number, starting at 1.
+     */
+    attempt: number;
+    /**
+     * Error that triggered this retry attempt.
+     */
+    error: unknown;
+}
+/**
+ * Client context options that control retry behavior per call
+ * when the `RetryLinkPlugin` is enabled.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/retry | Retry Plugin}
+ */
+interface RetryLinkPluginContext {
+    /**
+     * Maximum retry attempts before throwing.
+     * Use `Number.POSITIVE_INFINITY` for infinite retries (e.g. for AsyncIteratorObject).
+     *
+     * @default 0
+     */
+    retry?: Value<Promisable<number>, [Omit<StandardLinkInterceptorOptions<RetryLinkPluginContext>, 'next'>]>;
+    /**
+     * Delay (in ms) before retrying.
+     *
+     * @remarks
+     * **Note**: Why 2000ms? The EventSource spec suggests a default retry delay of 2 seconds if it doesn't specify
+     *
+     * @default (o) => o.lastEventRetry ?? 2000
+     */
+    retryDelay?: Value<Promisable<number>, [RetryLinkPluginAttemptOptions<RetryLinkPluginContext>]>;
+    /**
+     * Determine whether to retry.
+     *
+     * @default true
+     */
+    shouldRetry?: Value<Promisable<boolean>, [RetryLinkPluginAttemptOptions<RetryLinkPluginContext>]>;
+    /**
+     * Hook called before each retry. Can return a cleanup callback.
+     */
+    onRetry?: (options: RetryLinkPluginAttemptOptions<RetryLinkPluginContext>) => void | ((isSuccess: boolean) => void);
+}
+interface RetryLinkPluginOptions<_T extends RetryLinkPluginContext> {
+    /**
+     * Default retry options. Can be overridden by individual calls via the context.
+     */
+    default?: RetryLinkPluginContext | undefined;
+}
+/**
+ * Automatically retries failed requests based on customizable retry strategies,
+ * improving the resilience of your application.
+ *
+ * @remarks
+ * **Note**: Retry behavior is configured through the client context on each call.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/retry | Retry Plugin}
+ */
+declare class RetryLinkPlugin<T extends RetryLinkPluginContext & ClientContext> implements StandardLinkPlugin<T> {
+    private readonly defaultRetry;
+    private readonly defaultRetryDelay;
+    private readonly defaultShouldRetry;
+    private readonly defaultOnRetry;
+    name: string;
+    constructor(options?: RetryLinkPluginOptions<T>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+interface RetryAfterLinkPluginOptions<T extends ClientContext> {
+    /**
+     * Override condition to determine whether to retry or not.
+     *
+     * @default ((response) => response.status === 429 || response.status === 503)
+     */
+    condition?: Value<boolean, [
+        response: StandardLazyResponse,
+        options: StandardLinkTransportInterceptorOptions<T>
+    ]>;
+    /**
+     * Maximum attempts before giving up retries.
+     *
+     * @default 3
+     */
+    maxAttempts?: Value<number, [
+        response: StandardLazyResponse,
+        options: StandardLinkTransportInterceptorOptions<T>
+    ]>;
+    /**
+     * Maximum timeout in milliseconds to wait before giving up retries.
+     *
+     * @default 5 * 60 * 1000 (5 minutes)
+     */
+    timeout?: Value<number, [
+        response: StandardLazyResponse,
+        options: StandardLinkTransportInterceptorOptions<T>
+    ]>;
+}
+/**
+ * The Retry After Link Plugin automatically retries requests based on server `retry-after` header.
+ * This is particularly useful for handling rate limiting and temporary server unavailability.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/retry-after | Retry After Plugin}
+ */
+declare class RetryAfterLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    private readonly condition;
+    private readonly maxAttempts;
+    private readonly timeout;
+    name: string;
+    constructor(options?: RetryAfterLinkPluginOptions<T>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+interface TimeoutLinkPluginOptions<T extends ClientContext> {
+    /**
+     * Timeout in milliseconds before the request is aborted.
+     * Use `null` or `undefined` to disable the timeout.
+     */
+    timeout: Value<number | null | undefined, [options: StandardLinkInterceptorOptions<T>]>;
+}
+/**
+ * The Timeout Link Plugin aborts requests that exceed a configured timeout with an `AbortError`.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/timeout | Timeout Plugin}
+ */
+declare class TimeoutLinkPlugin<T extends ClientContext> implements StandardLinkPlugin<T> {
+    private readonly timeout;
+    name: string;
+    /**
+     * Should abort if the total retry time exceeds the configured timeout
+     */
+    after: string[];
+    constructor(options: NoInfer<TimeoutLinkPluginOptions<T>>);
+    init(options: StandardLinkOptions<T>): StandardLinkOptions<T>;
+}
+
+export { BatchLinkPlugin, RetryLinkPlugin as ClientRetryPlugin, DedupeLinkPlugin, DedupeLinkPlugin as DedupeRequestsPlugin, RequestCompressionLinkPlugin, ResponseCompressionLinkPlugin, RetryAfterLinkPlugin, RetryAfterLinkPlugin as RetryAfterPlugin, RetryLinkPlugin, TimeoutLinkPlugin };
+export type { BatchLinkPluginGroup, BatchLinkPluginMode, BatchLinkPluginOptions, RetryLinkPluginContext as ClientRetryPluginContext, DedupeLinkPluginGroup, DedupeLinkPluginOptions, RequestCompressionLinkPluginOptions, ResponseCompressionLinkPluginOptions, RetryAfterLinkPluginOptions, RetryLinkPluginAttemptOptions, RetryLinkPluginContext, RetryLinkPluginOptions, TimeoutLinkPluginOptions };

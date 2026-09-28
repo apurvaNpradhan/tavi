@@ -1,0 +1,12 @@
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+export interface DevtoolsPanelProps extends TanStackDevtoolsPluginProps {
+    [key: string]: any;
+}
+interface BaseCorePanelClass {
+    [key: string]: any;
+    mount: <T extends HTMLElement>(el: T, props: TanStackDevtoolsPluginProps) => void;
+    unmount: () => void;
+}
+type CoreClassConstructor<TComponentProps extends DevtoolsPanelProps, TCoreDevtoolsClass extends BaseCorePanelClass> = new (props: TComponentProps) => TCoreDevtoolsClass;
+export declare function createAngularPanel<TComponentProps extends DevtoolsPanelProps, TCoreDevtoolsClass extends BaseCorePanelClass>(CoreClass: CoreClassConstructor<TanStackDevtoolsPluginProps, TCoreDevtoolsClass> | (() => Promise<CoreClassConstructor<TanStackDevtoolsPluginProps, TCoreDevtoolsClass>>)): readonly [() => (inputs: () => TComponentProps, host: HTMLElement) => (() => void), () => null];
+export {};

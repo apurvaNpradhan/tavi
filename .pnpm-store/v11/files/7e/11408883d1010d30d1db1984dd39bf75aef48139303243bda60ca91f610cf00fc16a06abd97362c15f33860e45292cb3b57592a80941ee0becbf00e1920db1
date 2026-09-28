@@ -1,0 +1,156 @@
+import { WrapAsyncIteratorOptions, AsyncIteratorClass, Interceptor, PromiseWithError, ThrowableError, Promisable } from '@orpc/shared';
+export { AsyncCleanupFn, AsyncIteratorClass, AsyncIteratorClassNextFn, PromiseWithError as ClientPromiseResult, MaybeOptionalOptions, PromiseWithError, Registry, ThrowableError, asyncIteratorToStream, asyncIteratorToUnproxiedDataStream, consumeAsyncIterator, consumeAsyncIterator as consumeEventIterator, asyncIteratorToStream as eventIteratorToStream, asyncIteratorToUnproxiedDataStream as eventIteratorToUnproxiedDataStream, onAsyncIteratorObjectError, onError, onFinish, onReadableStreamError, onStart, onSuccess, streamToAsyncIteratorObject, streamToAsyncIteratorObject as streamToEventIterator } from '@orpc/shared';
+import { C as ClientContext, a as ClientOptions, c as AnyNestedClient, I as InferClientContext, d as InferClientError, e as Client, b as ClientLink, A as AnyORPCError, f as ClientRest, F as FriendlyClientOptions, O as ORPCErrorCode, g as ORPCErrorJSON, h as ORPCError, M as MalformedResponseErrorOptions } from './shared/client.BoXZCzuS.mjs';
+export { i as AnyORPCErrorJSON, j as COMMON_ERROR_STATUS_MAP, k as InferClientBodyInputs, l as InferClientBodyOutputs, m as InferClientErrors, n as InferClientInputs, o as InferClientOutputs, p as MalformedResponseError, N as NestedClient, q as ORPCErrorOptions } from './shared/client.BoXZCzuS.mjs';
+import { StandardResponse } from '@standard-server/core';
+export { ErrorEvent, EventMeta, StandardBody, StandardBodyHint, StandardHeaders, StandardLazyRequest, StandardLazyResponse, StandardMethod, StandardRequest, StandardResponse, StandardUrl, getEventMeta, unwrapEvent, withEventMeta } from '@standard-server/core';
+export { R as RPCJsonSerialization, a as RPCJsonSerializationMeta, b as RPCJsonSerializer, c as RPCJsonSerializerHandler, d as RPCJsonSerializerOptions, e as RPCSerializer, f as RPCSerializerOptions, g as RPCSerializerSerializeOptions } from './shared/client.n8K9dFhY.mjs';
+
+declare function wrapAsyncIteratorPreservingEventMeta<TYield, TReturn, TMappedYield = TYield, TMappedReturn = TReturn>(iterator: AsyncIterator<TYield, TReturn>, { mapResult, mapError, ...rest }: WrapAsyncIteratorOptions<TYield, TReturn, TMappedYield, TMappedReturn>): AsyncIteratorClass<TMappedYield, TMappedReturn>;
+
+interface ORPCClientInterceptorOptions<TClientContext extends ClientContext, TInput> extends ClientOptions<TClientContext> {
+    path: string[];
+    input: TInput;
+}
+type ORPCClientInterceptor<TClientContext extends ClientContext, TInput, TOutput, TError> = Interceptor<ORPCClientInterceptorOptions<TClientContext, TInput>, PromiseWithError<TOutput, TError>>;
+interface ORPCClientScopedOptions<TClientContext extends ClientContext, TInput, TOutput, TError> {
+    /**
+     * Interceptors that wrap the entire client call lifecycle.
+     */
+    interceptors?: ORPCClientInterceptor<TClientContext, TInput, TOutput, TError>[];
+}
+type ORPCClientScoped<T extends AnyNestedClient> = T extends Client<infer UClientContext, infer UInput, infer UOutput, infer UError> ? ORPCClientScopedOptions<UClientContext, UInput, UOutput, UError> : {
+    [K in keyof T]?: T[K] extends AnyNestedClient ? ORPCClientScoped<T[K]> : never;
+};
+interface ORPCClientOptions<T extends AnyNestedClient> {
+    /**
+     * Use as base path for all procedure, useful when you only want to call a subset of the procedure.
+     */
+    path?: string[];
+    /**
+     * Interceptors that wrap the entire client call lifecycle, applied to every procedure call.
+     */
+    interceptors?: ORPCClientInterceptor<InferClientContext<T>, unknown, unknown, InferClientError<T>>[];
+    /**
+     * Per-procedure options following the shape of the router.
+     * Allows fine-grained configuration (e.g. additional interceptors) for individual procedures
+     * without affecting the rest of the router.
+     */
+    scoped?: ORPCClientScoped<T>;
+}
+/**
+ * Creates a fully typed oRPC client from a link.
+ * The returned client mirrors the shape of your router or contract,
+ * so calling a procedure is as simple as calling a function.
+ *
+ * @see {@link https://orpc.dev/docs/client/client-side | Client-Side Clients}
+ */
+declare function createORPCClient<T extends AnyNestedClient>(link: ClientLink<InferClientContext<T>>, { path, ...options }?: NoInfer<ORPCClientOptions<T>>): T;
+
+declare function resolveFriendlyClientOptions<T extends ClientContext>(options: FriendlyClientOptions<T>): ClientOptions<T>;
+declare function resolveClientRest<TClientContext extends ClientContext, TInput>(rest: ClientRest<TClientContext, TInput>): [input: TInput, options: ClientOptions<TClientContext>];
+type SafeResult<TOutput, TError> = [error: null, data: TOutput, definedError: null, isSuccess: true] & {
+    error: null;
+    data: TOutput;
+    definedError: null;
+    isSuccess: true;
+} | [error: Exclude<TError, AnyORPCError>, data: undefined, definedError: null, isSuccess: false] & {
+    error: Exclude<TError, AnyORPCError>;
+    data: undefined;
+    definedError: null;
+    isSuccess: false;
+} | [error: Extract<TError, AnyORPCError>, data: undefined, definedError: Extract<TError, AnyORPCError>, isSuccess: false] & {
+    error: Extract<TError, AnyORPCError>;
+    data: undefined;
+    definedError: Extract<TError, AnyORPCError>;
+    isSuccess: false;
+};
+/**
+ * Works like try/catch, but help you infer the error type if it is a defined ORPCError.
+ *
+ * @example
+ * ```ts
+ * const [error, data, definedError, isSuccess] = await safe(client(...))
+ * // or const { error, data, definedError, isSuccess } = await safe(client(...))
+ *
+ * if (definedError) {
+ *  console.log(definedError) // or error, both are well typed
+ * }
+ * ```
+ *
+ * @see {@link https://orpc.dev/docs/client/error-handling#using-safe-and-isdefinederror | Client Error Handling - Using safe and isDefinedError}
+ */
+declare function safe<TOutput, TError = ThrowableError>(promise: PromiseWithError<TOutput, TError>): Promise<SafeResult<TOutput, TError>>;
+
+type SafeClient<T extends AnyNestedClient> = T extends Client<infer UContext, infer UInput, infer UOutput, infer UError> ? (...rest: ClientRest<UContext, UInput>) => Promise<SafeResult<UOutput, UError>> : {
+    [K in keyof T]: T[K] extends AnyNestedClient ? SafeClient<T[K]> : never;
+};
+/**
+ * Create a safe client that automatically wraps all procedure calls with the `safe` util.
+ *
+ * @example
+ * ```ts
+ * const safeClient = createSafeClient(client)
+ * const { error, data, definedError, isSuccess } = await safeClient.doSomething({ id: '123' })
+ * // or const [error, data, definedError, isSuccess] = await safeClient.doSomething({ id: '123' })
+ * ```
+ *
+ * @see {@link https://orpc.dev/docs/client/error-handling#safe-client | Client Error Handling - Safe Client}
+ */
+declare function createSafeClient<T extends AnyNestedClient>(client: T): SafeClient<T>;
+
+/**
+ * Property names that should resolve to the underlying value instead of
+ * continuing recursive proxy traversal.
+ *
+ * These properties are commonly accessed automatically by JavaScript runtimes,
+ * language features, or third-party libraries. Returning another recursive
+ * proxy for them can cause unexpected behavior, compatibility issues, or
+ * infinite proxy chains.
+ */
+declare const RECURSIVE_CLIENT_UNWRAP_KEYS: Set<string>;
+
+/**
+ * DynamicLink provides a way to dynamically resolve and delegate calls to other ClientLinks
+ * based on the request path, input, and context.
+ *
+ * @see {@link https://orpc.dev/docs/client/dynamic-link | DynamicLink}
+ */
+declare class DynamicLink<TClientContext extends ClientContext> implements ClientLink<TClientContext> {
+    private readonly linkResolver;
+    constructor(linkResolver: (options: ClientOptions<TClientContext>, path: string[], input: unknown) => Promisable<ClientLink<TClientContext>>);
+    call(path: string[], input: unknown, options: ClientOptions<TClientContext>): Promise<unknown>;
+}
+
+/**
+ * Checks if an error is an `ORPCError` that matches a definition in the procedure's `.errors` map,
+ * narrowing it so `code` and `data` are fully typed.
+ *
+ * @see {@link https://orpc.dev/docs/client/error-handling#using-safe-and-isdefinederror | Client Error Handling - Using safe and isDefinedError}
+ */
+declare function isDefinedError<T>(error: T): error is Extract<T, AnyORPCError>;
+declare function toORPCError<T>(error: T): Extract<T, AnyORPCError> | ORPCError<'INTERNAL_SERVER_ERROR', undefined>;
+declare function isORPCErrorJson(json: unknown): json is ORPCErrorJSON<ORPCErrorCode, unknown>;
+declare function createORPCErrorFromJson<TCode extends ORPCErrorCode, TData>(json: ORPCErrorJSON<TCode, TData>, options?: ErrorOptions): ORPCError<TCode, TData>;
+/**
+ * Creates the `MALFORMED_ORPC_RESPONSE` `ORPCError` used when a response
+ * does not follow the expected oRPC format. Unless overridden via `options.message`,
+ * the message is inferred from the response body or status. The `cause` is a
+ * `MalformedResponseError` carrying the resolved response.
+ *
+ * @see {@link https://orpc.dev/docs/rpc/link#malformed-responses | RPC Link - Malformed Responses}
+ * @see {@link https://orpc.dev/docs/openapi/link#malformed-responses | OpenAPI Link - Malformed Responses}
+ */
+declare function createORPCErrorFromMalformedResponse(options: MalformedResponseErrorOptions): ORPCError<'MALFORMED_ORPC_RESPONSE', StandardResponse>;
+/**
+ * Clones an `ORPCError` while preserving its prototype chain, so instances of
+ * `ORPCError` subclasses remain `instanceof` their class.
+ *
+ * Limitation: subclass constructors are not re-run, so private fields
+ * (`#field`) are not carried over and subclass members that read them
+ * will throw on the clone.
+ */
+declare function cloneORPCError<T extends AnyORPCError>(error: T): T;
+
+export { AnyNestedClient, AnyORPCError, Client, ClientContext, ClientLink, ClientOptions, ClientRest, DynamicLink, FriendlyClientOptions, InferClientContext, InferClientError, InferClientError as InferClientErrorUnion, MalformedResponseErrorOptions, ORPCError, ORPCErrorCode, ORPCErrorJSON, RECURSIVE_CLIENT_UNWRAP_KEYS, cloneORPCError, createORPCClient, createORPCErrorFromJson, createORPCErrorFromMalformedResponse, createSafeClient, isDefinedError, isORPCErrorJson, resolveClientRest, resolveFriendlyClientOptions, safe, toORPCError, wrapAsyncIteratorPreservingEventMeta };
+export type { ORPCClientInterceptor, ORPCClientInterceptorOptions, ORPCClientOptions, ORPCClientScoped, ORPCClientScopedOptions, SafeClient, SafeResult };

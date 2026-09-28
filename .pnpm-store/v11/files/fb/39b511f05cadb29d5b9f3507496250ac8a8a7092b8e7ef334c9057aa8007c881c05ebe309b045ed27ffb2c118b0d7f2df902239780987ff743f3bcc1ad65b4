@@ -1,0 +1,14 @@
+import { ContractBuilder } from '@orpc/contract';
+import { Builder, DecoratedProcedure } from '@orpc/server';
+import { o as openapi } from '../shared/openapi.B9PQzqBn.mjs';
+import '@orpc/shared';
+
+ContractBuilder.prototype.route = function route(meta) {
+  return this.meta(openapi(meta));
+};
+Builder.prototype.route = function route2(meta) {
+  return this.meta(openapi(meta));
+};
+DecoratedProcedure.prototype.route = function route3(meta) {
+  return this.meta(openapi(meta));
+};

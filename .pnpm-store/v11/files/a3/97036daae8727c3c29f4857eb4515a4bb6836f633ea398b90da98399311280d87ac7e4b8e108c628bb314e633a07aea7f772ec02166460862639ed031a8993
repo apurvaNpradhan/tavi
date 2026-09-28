@@ -1,0 +1,18 @@
+import { A11yAuditResult, A11yPluginOptions, SeverityThreshold } from '../types/types.js';
+import { ParentComponent } from 'solid-js';
+type AllyProviderProps = {};
+export declare const AllyProvider: ParentComponent<AllyProviderProps>;
+export declare function createAllyContext(): {
+    impactKey: import('solid-js').Accessor<SeverityThreshold | "all">;
+    setImpactKey: import('solid-js').Setter<SeverityThreshold | "all">;
+    filteredIssues: import('solid-js').Accessor<import('../types/types.js').A11yIssue[]>;
+    triggerAllyScan: () => Promise<void>;
+    setConfig: import('solid-js/store').SetStoreFunction<Required<A11yPluginOptions>>;
+    config: Required<A11yPluginOptions>;
+    allyResult: {
+        audit?: A11yAuditResult;
+        state: "init" | "scanning" | "done";
+    };
+    theme: import('solid-js').Accessor<import('@tanstack/devtools-ui').TanStackDevtoolsTheme>;
+};
+export {};

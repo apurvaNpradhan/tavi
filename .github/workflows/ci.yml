@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-flight run when a branch is pushed again.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # permissions and email are consumed from `dist`, so they must be compiled
+      # before anything type-checks or builds against them.
+      - name: Build workspace packages
+        run: |
+          pnpm --filter @tavi/permissions build
+          pnpm --filter @tavi/env build
+          pnpm --filter @tavi/email build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # The email package is consumed as a built artifact at runtime; this
+      # asserts the published output is loadable by Node's ESM loader.
+      - name: Verify built package output
+        run: pnpm --filter @tavi/api test
+
+      # Contract drift is a review problem, not a runtime one, so it fails here.
+      - name: Check the OpenAPI artifact
+        run: pnpm openapi:check
+
+      - name: Check locale drift
+        run: pnpm i18n:check
+
+      # `i18n:check` compares locales with each other; this compares them with
+      # the code. A key nothing defines renders as the key itself, so it has to
+      # fail here rather than reach a user.
+      - name: Check translation key usage
+        run: pnpm i18n:report
+
+      - name: Build
+        run: pnpm build

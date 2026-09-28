@@ -1,0 +1,16 @@
+import { render, createComponent, Portal, ssr, ssrStyleProperty, escape } from 'solid-js/web';
+import { lazy } from 'solid-js';
+
+// src/solid/class-mount-impl.tsx
+var _tmpl$ = ['<div style="', '">', "</div>"];
+function __mountComponent(el, props, importFn) {
+  const Component = lazy(importFn);
+  return render(() => createComponent(Portal, {
+    mount: el,
+    get children() {
+      return ssr(_tmpl$, ssrStyleProperty("height:", "100%"), escape(createComponent(Component, props)));
+    }
+  }), el);
+}
+
+export { __mountComponent };

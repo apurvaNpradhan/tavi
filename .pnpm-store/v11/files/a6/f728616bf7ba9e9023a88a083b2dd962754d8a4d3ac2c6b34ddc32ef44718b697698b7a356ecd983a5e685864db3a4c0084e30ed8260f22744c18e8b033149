@@ -1,0 +1,245 @@
+import { d as deepClone, c as convertRecord, i as isRecord, g as getRef, D as DROP, m as mapRecord, a as mapArray, o as operationFields } from './shared/downgrader.COVMw0me.mjs';
+
+const HEADERS_REF_PREFIX = "#/components/headers/";
+const MEDIA_TYPES_REF_PREFIX = "#/components/mediaTypes/";
+const PARAMETERS_REF_PREFIX = "#/components/parameters/";
+const V32_DIALECT_PREFIX = "https://spec.openapis.org/oas/3.2/dialect/";
+const V31_DIALECT = "https://spec.openapis.org/oas/3.1/dialect/base";
+function downgradeSchemaV32ToV31(schema) {
+  return deepClone(schema);
+}
+function convertRefOr(value, context, convert) {
+  return getRef(value) === void 0 ? convert(value, context) : deepClone(value);
+}
+function refMap(context, convert) {
+  return (item) => mapRecord(item, (entry) => convertRefOr(entry, context, convert));
+}
+function convertServer(value) {
+  return convertRecord(value, { name: DROP });
+}
+function convertTag(value) {
+  return convertRecord(value, { kind: DROP, parent: DROP, summary: DROP });
+}
+function convertLink(value) {
+  return convertRecord(value, { server: convertServer });
+}
+function convertSecurityScheme(value) {
+  return convertRecord(value, {
+    deprecated: DROP,
+    flows: (item) => convertRecord(item, { deviceAuthorization: DROP }),
+    oauth2MetadataUrl: DROP
+  });
+}
+function convertExample(value) {
+  return convertRecord(value, { dataValue: DROP, serializedValue: DROP }, (out, example) => {
+    if ("value" in example || "externalValue" in example) {
+      return out;
+    }
+    if ("dataValue" in example) {
+      out.value = deepClone(example.dataValue);
+    } else if ("serializedValue" in example) {
+      out.value = deepClone(example.serializedValue);
+    }
+    return out;
+  });
+}
+function isQuerystringParameter(value) {
+  return isRecord(value) && value.in === "querystring";
+}
+function isRemovedRef(value, removed) {
+  const ref = getRef(value);
+  return ref !== void 0 && removed.has(ref);
+}
+function convertParameterOrHeader(value, context) {
+  return convertRecord(
+    value,
+    {
+      allowReserved: (item, parameter) => !("in" in parameter) || parameter.in === "query" ? deepClone(item) : DROP,
+      content: (item) => convertContentMap(item, context),
+      examples: refMap(context, convertExample),
+      style: (item) => item === "cookie" ? DROP : deepClone(item)
+    },
+    (out, parameter) => {
+      const lostContent = isRecord(parameter.content) && Object.keys(parameter.content).length > 0 && isRecord(out.content) && Object.keys(out.content).length === 0;
+      return lostContent ? DROP : out;
+    }
+  );
+}
+function convertParameterEntry(value, context) {
+  return isQuerystringParameter(value) || isRemovedRef(value, context.removedParameterRefs) ? DROP : convertRefOr(value, context, convertParameterOrHeader);
+}
+function convertHeaderMap(value, context) {
+  return mapRecord(value, (item) => isRemovedRef(item, context.removedHeaderRefs) ? DROP : convertRefOr(item, context, convertParameterOrHeader));
+}
+function convertEncoding(value, context) {
+  return convertRecord(value, {
+    encoding: DROP,
+    headers: (item) => convertHeaderMap(item, context),
+    itemEncoding: DROP,
+    prefixEncoding: DROP
+  });
+}
+function convertMediaType(value, context) {
+  return convertRecord(
+    value,
+    {
+      description: DROP,
+      encoding: (item) => mapRecord(item, (entry) => convertEncoding(entry, context)),
+      examples: refMap(context, convertExample),
+      itemEncoding: DROP,
+      itemSchema: DROP,
+      prefixEncoding: DROP
+    },
+    (out, mediaType) => {
+      if ("itemSchema" in mediaType && out.schema === void 0) {
+        out.schema = { items: deepClone(mediaType.itemSchema), type: "array" };
+      }
+      return out;
+    }
+  );
+}
+function resolveMediaType(value, mediaTypes, seen) {
+  const ref = getRef(value);
+  if (ref === void 0) {
+    return value;
+  }
+  if (!ref.startsWith(MEDIA_TYPES_REF_PREFIX)) {
+    return DROP;
+  }
+  const name = ref.slice(MEDIA_TYPES_REF_PREFIX.length);
+  if (name === "" || name.includes("/") || mediaTypes === void 0 || !Object.hasOwn(mediaTypes, name) || seen.has(name)) {
+    return DROP;
+  }
+  seen.add(name);
+  return resolveMediaType(mediaTypes[name], mediaTypes, seen);
+}
+function convertContentMap(value, context) {
+  return mapRecord(value, (item) => {
+    const target = resolveMediaType(item, context.mediaTypes, /* @__PURE__ */ new Set());
+    return target === DROP ? DROP : convertMediaType(target, context);
+  });
+}
+function convertRequestBody(value, context) {
+  return convertRecord(value, { content: (item) => convertContentMap(item, context) });
+}
+function convertResponse(value, context) {
+  return convertRecord(
+    value,
+    {
+      content: (item) => convertContentMap(item, context),
+      headers: (item) => convertHeaderMap(item, context),
+      links: refMap(context, convertLink),
+      summary: DROP
+    },
+    (out, response) => {
+      if (out.description === void 0) {
+        out.description = typeof response.summary === "string" ? response.summary : "";
+      }
+      return out;
+    }
+  );
+}
+function convertResponses(value, context) {
+  return mapRecord(value, (item, key) => key.startsWith("x-") ? deepClone(item) : convertRefOr(item, context, convertResponse));
+}
+function convertOperation(value, context) {
+  return convertRecord(value, {
+    callbacks: refMap(context, convertCallback),
+    parameters: (item) => mapArray(item, (entry) => convertParameterEntry(entry, context)),
+    requestBody: (item) => convertRefOr(item, context, convertRequestBody),
+    responses: (item) => convertResponses(item, context),
+    servers: (item) => mapArray(item, convertServer)
+  });
+}
+function convertCallback(value, context) {
+  return mapRecord(value, (item, key) => key.startsWith("x-") ? deepClone(item) : convertPathItem(item, context));
+}
+function convertPathItem(value, context) {
+  return convertRecord(value, {
+    ...operationFields((item) => convertOperation(item, context)),
+    additionalOperations: DROP,
+    parameters: (item) => mapArray(item, (entry) => convertParameterEntry(entry, context)),
+    query: DROP,
+    servers: (item) => mapArray(item, convertServer)
+  });
+}
+function convertPaths(value, context) {
+  return mapRecord(value, (item, key) => key.startsWith("/") ? convertPathItem(item, context) : deepClone(item));
+}
+function convertComponents(value, context) {
+  return convertRecord(value, {
+    callbacks: refMap(context, convertCallback),
+    examples: refMap(context, convertExample),
+    headers: (item) => convertHeaderMap(item, context),
+    links: refMap(context, convertLink),
+    mediaTypes: DROP,
+    parameters: (item) => mapRecord(item, (entry) => convertParameterEntry(entry, context)),
+    pathItems: (item) => mapRecord(item, (entry) => convertPathItem(entry, context)),
+    requestBodies: refMap(context, convertRequestBody),
+    responses: refMap(context, convertResponse),
+    securitySchemes: refMap(context, convertSecurityScheme)
+  });
+}
+function losesEntireContent(value, mediaTypes) {
+  if (!(isRecord(value) && isRecord(value.content))) {
+    return false;
+  }
+  const entries = Object.values(value.content);
+  return entries.length > 0 && entries.every((item) => resolveMediaType(item, mediaTypes, /* @__PURE__ */ new Set()) === DROP);
+}
+function indexRemovedComponentRefs(map, prefix, mediaTypes, isDirectlyRemoved) {
+  const removed = /* @__PURE__ */ new Set();
+  if (!isRecord(map)) {
+    return removed;
+  }
+  const entries = Object.entries(map);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, item] of entries) {
+      const selfRef = prefix + name;
+      if (removed.has(selfRef)) {
+        continue;
+      }
+      const target = getRef(item);
+      if (isDirectlyRemoved(item) || losesEntireContent(item, mediaTypes) || target !== void 0 && removed.has(target)) {
+        removed.add(selfRef);
+        changed = true;
+      }
+    }
+  }
+  return removed;
+}
+function createContext(spec) {
+  const components = isRecord(spec) ? spec.components : void 0;
+  const mediaTypes = isRecord(components) && isRecord(components.mediaTypes) ? components.mediaTypes : void 0;
+  return {
+    mediaTypes,
+    removedHeaderRefs: indexRemovedComponentRefs(isRecord(components) ? components.headers : void 0, HEADERS_REF_PREFIX, mediaTypes, () => false),
+    removedParameterRefs: indexRemovedComponentRefs(isRecord(components) ? components.parameters : void 0, PARAMETERS_REF_PREFIX, mediaTypes, isQuerystringParameter)
+  };
+}
+function convertJsonSchemaDialect(value) {
+  return typeof value === "string" && value.startsWith(V32_DIALECT_PREFIX) ? V31_DIALECT : deepClone(value);
+}
+function downgradeSpecV32ToV31(spec) {
+  const context = createContext(spec);
+  return convertRecord(
+    spec,
+    {
+      $self: DROP,
+      components: (item) => convertComponents(item, context),
+      jsonSchemaDialect: convertJsonSchemaDialect,
+      paths: (item) => convertPaths(item, context),
+      servers: (item) => mapArray(item, convertServer),
+      tags: (item) => mapArray(item, convertTag),
+      webhooks: (item) => mapRecord(item, (entry) => convertPathItem(entry, context))
+    },
+    (out) => {
+      out.openapi = "3.1.2";
+      return out;
+    }
+  );
+}
+
+export { downgradeSchemaV32ToV31, downgradeSpecV32ToV31 };

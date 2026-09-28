@@ -1,0 +1,146 @@
+{
+  "name": "@tanstack/devtools-utils",
+  "version": "0.7.0",
+  "description": "TanStack Devtools utilities for creating your own devtools.",
+  "author": "Tanner Linsley",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TanStack/devtools.git",
+    "directory": "packages/devtools-utils"
+  },
+  "homepage": "https://tanstack.com/devtools",
+  "bugs": {
+    "url": "https://github.com/TanStack/devtools/issues"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/tannerlinsley"
+  },
+  "keywords": [
+    "devtools"
+  ],
+  "type": "module",
+  "exports": {
+    "./react": {
+      "import": {
+        "types": "./dist/react/esm/index.d.ts",
+        "default": "./dist/react/esm/index.js"
+      }
+    },
+    "./preact": {
+      "import": {
+        "types": "./dist/preact/esm/index.d.ts",
+        "default": "./dist/preact/esm/index.js"
+      }
+    },
+    "./solid": {
+      "workerd": {
+        "types": "./dist/solid/esm/index.d.ts",
+        "import": "./dist/solid/esm/server.js"
+      },
+      "browser": {
+        "development": {
+          "types": "./dist/solid/esm/index.d.ts",
+          "import": "./dist/solid/esm/dev.js"
+        },
+        "types": "./dist/solid/esm/index.d.ts",
+        "import": "./dist/solid/esm/index.js"
+      },
+      "node": {
+        "types": "./dist/solid/esm/index.d.ts",
+        "import": "./dist/solid/esm/server.js"
+      },
+      "types": "./dist/solid/esm/index.d.ts",
+      "import": "./dist/solid/esm/index.js"
+    },
+    "./solid/class": {
+      "import": {
+        "types": "./dist/solid-class/esm/class.d.ts",
+        "default": "./dist/solid-class/esm/class.js"
+      }
+    },
+    "./vue": {
+      "import": {
+        "types": "./dist/vue/esm/index.d.ts",
+        "default": "./dist/vue/esm/index.js"
+      }
+    },
+    "./svelte": {
+      "import": {
+        "types": "./dist/svelte/esm/index.d.ts",
+        "default": "./dist/svelte/esm/index.js"
+      }
+    },
+    "./angular": {
+      "import": {
+        "types": "./dist/angular/esm/index.d.ts",
+        "default": "./dist/angular/esm/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "intent": "./bin/intent.js"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.0.0",
+    "svelte": "^5.0.0",
+    "tsup": "^8.5.0",
+    "tsup-preset-solid": "^2.2.0",
+    "vite-plugin-solid": "^2.11.11",
+    "@tanstack/devtools": "^0.14.2"
+  },
+  "peerDependencies": {
+    "@angular/core": ">=19.0.0",
+    "@types/react": ">=17.0.0",
+    "preact": ">=10.0.0",
+    "react": ">=17.0.0",
+    "solid-js": ">=1.9.7",
+    "svelte": ">=5.0.0",
+    "vue": ">=3.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@angular/core": {
+      "optional": true
+    },
+    "@types/react": {
+      "optional": true
+    },
+    "preact": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    },
+    "svelte": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist/",
+    "src",
+    "skills",
+    "bin"
+  ],
+  "scripts": {
+    "clean": "premove ./build ./dist",
+    "lint:fix": "eslint ./src --fix",
+    "test:eslint": "eslint ./src",
+    "test:lib": "vitest",
+    "test:lib:dev": "pnpm test:lib --watch",
+    "test:types": "tsc",
+    "test:build": "publint --strict",
+    "build": "vite build && vite build --config vite.config.preact.ts && vite build --config vite.config.vue.ts && vite build --config vite.config.solid-class.ts && vite build --config vite.config.angular.ts && vite build --config vite.config.svelte.ts && tsup"
+  }
+}

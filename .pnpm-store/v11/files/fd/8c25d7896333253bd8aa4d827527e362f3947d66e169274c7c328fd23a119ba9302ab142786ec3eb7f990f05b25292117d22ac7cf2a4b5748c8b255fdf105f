@@ -1,0 +1,26 @@
+import { TanStackDevtoolsTheme } from '@tanstack/devtools-ui';
+import { A11yIssue, RuleSetPreset, SeverityThreshold } from '../types/types.js';
+export declare function scrollToElement(selector: string): boolean;
+/**
+ * Severity levels mapped to numeric values for comparison (higher = more severe)
+ */
+export declare const SEVERITY_ORDER: Record<SeverityThreshold, number>;
+export declare const SEVERITY_LABELS: Record<SeverityThreshold, string>;
+export declare const RULE_SET_LABELS: Record<RuleSetPreset, string>;
+/**
+ * Highlight a single element with the specified severity
+ */
+export declare function highlightElement(selector: string, impact?: SeverityThreshold, options?: {
+    showTooltip?: boolean;
+    ruleId?: string;
+    theme?: TanStackDevtoolsTheme;
+}): void;
+/**
+ * Highlight all elements with issues.
+ * Shows all issues per element in the tooltip, using the most severe for highlighting.
+ */
+export declare function highlightAllIssues(issues: Array<A11yIssue>, theme?: TanStackDevtoolsTheme): void;
+/**
+ * Clear all highlights from the page
+ */
+export declare function clearHighlights(): void;

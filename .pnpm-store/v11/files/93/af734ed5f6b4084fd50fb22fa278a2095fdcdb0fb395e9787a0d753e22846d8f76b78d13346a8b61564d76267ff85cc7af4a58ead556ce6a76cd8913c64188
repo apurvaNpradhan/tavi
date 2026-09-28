@@ -1,0 +1,11 @@
+import { StandardLazyRequest, StandardResponse } from '@standard-server/core';
+import { Context } from '../../index.mjs';
+import { StandardHandler } from '../standard/index.mjs';
+import { FriendlyStandardHandlerHandleOptions } from '../standard/index.mjs';
+import '@orpc/client';
+import '@orpc/contract';
+import '@orpc/shared';
+
+declare function createStandardPeerRequestHandler<T extends Context>(handler: StandardHandler<T>, options: FriendlyStandardHandlerHandleOptions<T>): (request: StandardLazyRequest) => Promise<StandardResponse>;
+
+export { createStandardPeerRequestHandler };

@@ -1,0 +1,14 @@
+import { Value, Promisable } from '@orpc/shared';
+import { StandardLazyRequest } from '@standard-server/core';
+import { C as Context } from './server.BsujoJoF.mjs';
+import { a as StandardHandlerHandleOptions } from './server.B5K1CViq.mjs';
+
+type FriendlyStandardHandlerHandleOptions<T extends Context> = Omit<StandardHandlerHandleOptions<T>, 'context'> & (object extends T ? {
+    context?: Value<Promisable<T>, [request: StandardLazyRequest]>;
+} : {
+    context: Value<Promisable<T>, [request: StandardLazyRequest]>;
+});
+declare function resolveFriendlyStandardHandlerHandleOptions<T extends Context>(options: FriendlyStandardHandlerHandleOptions<T>): StandardHandlerHandleOptions<T>;
+
+export { resolveFriendlyStandardHandlerHandleOptions as r };
+export type { FriendlyStandardHandlerHandleOptions as F };

@@ -1,0 +1,8 @@
+import { A11yDevtoolsCore } from "../core/index.js";
+import { createSolidPanel } from "@tanstack/devtools-utils/solid";
+//#region src/solid/A11yDevtools.ts
+var [A11yDevtoolsPanel, A11yDevtoolsPanelNoOp] = createSolidPanel(A11yDevtoolsCore);
+//#endregion
+export { A11yDevtoolsPanel, A11yDevtoolsPanelNoOp };
+
+//# sourceMappingURL=A11yDevtools.js.map

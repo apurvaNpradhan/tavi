@@ -1,0 +1,50 @@
+import { MaybeOptionalOptions } from '@orpc/shared';
+import { SendStandardResponseOptions, AnyAPIGatewayProxyEvent, HttpResponseStream } from '@standard-server/aws-lambda';
+import { Context } from '../../index.mjs';
+import { StandardHandler, StandardHandlerOptions } from '../standard/index.mjs';
+import { FriendlyStandardHandlerHandleOptions } from '../standard/index.mjs';
+import { Router } from '../../index.mjs';
+import { RPCHandlerCodecOptions } from '../standard/index.mjs';
+import '@orpc/client';
+import '@orpc/contract';
+import '@standard-server/core';
+
+type AwsLambdaHandlerHandleResult = {
+    matched: true;
+} | {
+    matched: false;
+};
+interface AwsLambdaHandlerOptions<_T extends Context> {
+    /**
+     * Custom options for `sendStandardResponse`, used to send a `Standard Response`
+     */
+    sendStandardResponse?: SendStandardResponseOptions | undefined;
+}
+/**
+ * Requires the AWS Lambda Node.js runtime with response streaming enabled,
+ * handlers should be wrapped with `awslambda.streamifyResponse`.
+ */
+declare class AwsLambdaHandler<T extends Context> {
+    private readonly standardHandler;
+    private readonly sendStandardResponseOptions;
+    constructor(standardHandler: StandardHandler<T>, options?: NoInfer<AwsLambdaHandlerOptions<T>>);
+    handle(event: AnyAPIGatewayProxyEvent, responseStream: HttpResponseStream, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): Promise<AwsLambdaHandlerHandleResult>;
+}
+
+interface RPCHandlerOptions<T extends Context> extends AwsLambdaHandlerOptions<T>, StandardHandlerOptions<T>, RPCHandlerCodecOptions<T> {
+}
+/**
+ * Serves an oRPC router over the RPC protocol on AWS Lambda,
+ * behind API Gateway or Lambda Function URLs.
+ *
+ * @remarks
+ * **Warning**: Requires the Lambda Node.js runtime with response streaming enabled, so handlers must be wrapped with `awslambda.streamifyResponse`.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/aws-lambda | AWS Lambda Adapter}
+ */
+declare class RPCHandler<T extends Context> extends AwsLambdaHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<RPCHandlerOptions<T>>);
+}
+
+export { AwsLambdaHandler, RPCHandler };
+export type { AwsLambdaHandlerHandleResult, AwsLambdaHandlerOptions, RPCHandlerOptions };

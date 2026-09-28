@@ -1,0 +1,123 @@
+import { isPlainObject, NullProtoObj, getOwn, setOwn } from '@orpc/shared';
+
+class BracketNotationSerializer {
+  maxExplicitDeserializingArrayIndex;
+  constructor(options = {}) {
+    this.maxExplicitDeserializingArrayIndex = options.maxExplicitDeserializingArrayIndex ?? 999;
+  }
+  serialize(data) {
+    const result = [];
+    this.internalSerialize(data, "", true, result);
+    return result;
+  }
+  internalSerialize(data, path, isRoot, result) {
+    if (Array.isArray(data)) {
+      data.forEach((item, i) => {
+        this.internalSerialize(item, isRoot ? i.toString() : `${path}[${i}]`, false, result);
+      });
+    } else if (isPlainObject(data)) {
+      for (const key of Object.keys(data)) {
+        this.internalSerialize(data[key], isRoot ? key : `${path}[${key}]`, false, result);
+      }
+    } else {
+      result.push([path, data]);
+    }
+  }
+  deserialize(serialized) {
+    const arrayPushStyles = /* @__PURE__ */ new WeakSet();
+    const root = new NullProtoObj();
+    for (const [path, value] of serialized) {
+      const segments = this.parsePath(path);
+      let currentRef = root;
+      let nextSegment = segments[0];
+      for (let i = 1; i < segments.length; i++) {
+        const segment = segments[i];
+        const isLast = i === segments.length - 1;
+        const existing = getOwn(currentRef, nextSegment);
+        let child = existing;
+        if (!Array.isArray(child) && !isPlainObject(child)) {
+          child = [];
+        }
+        if (Array.isArray(child)) {
+          const isPushStyle = arrayPushStyles.has(child);
+          const canStayArray = segment === "" ? isLast && (isPushStyle || child.length === 0) : internalIsValidArrayIndex(segment, this.maxExplicitDeserializingArrayIndex) && !(isLast && isPushStyle);
+          if (!canStayArray) {
+            arrayPushStyles.delete(child);
+            child = isPushStyle ? internalPushStyleArrayToObject(child) : internalArrayToObject(child);
+          }
+        }
+        if (child !== existing) {
+          setOwn(currentRef, nextSegment, child);
+        }
+        currentRef = child;
+        nextSegment = segment;
+      }
+      if (Array.isArray(currentRef) && nextSegment === "") {
+        arrayPushStyles.add(currentRef);
+        currentRef.push(value);
+      } else if (Object.hasOwn(currentRef, nextSegment)) {
+        const current = currentRef[nextSegment];
+        if (Array.isArray(current)) {
+          current.push(value);
+        } else {
+          setOwn(currentRef, nextSegment, [current, value]);
+        }
+      } else {
+        setOwn(currentRef, nextSegment, value);
+      }
+    }
+    return root;
+  }
+  stringifyPath(segments) {
+    if (segments.length === 0) {
+      return "";
+    }
+    let result = segments[0].toString();
+    for (let i = 1; i < segments.length; i++) {
+      result += `[${segments[i]}]`;
+    }
+    return result;
+  }
+  parsePath(path) {
+    const segments = [];
+    let inBrackets = false;
+    let currentSegment = "";
+    for (let i = 0; i < path.length; i++) {
+      const char = path[i];
+      const nextChar = path[i + 1];
+      if (inBrackets && char === "]" && (nextChar === void 0 || nextChar === "[")) {
+        if (nextChar === void 0) {
+          inBrackets = false;
+        }
+        segments.push(currentSegment);
+        currentSegment = "";
+        i++;
+      } else if (segments.length === 0 && char === "[") {
+        inBrackets = true;
+        segments.push(currentSegment);
+        currentSegment = "";
+      } else {
+        currentSegment += char;
+      }
+    }
+    return inBrackets || segments.length === 0 ? [path] : segments;
+  }
+}
+const INTEGER_PATTERN = /^0$|^[1-9]\d*$/;
+function internalIsValidArrayIndex(value, maxIndex) {
+  return INTEGER_PATTERN.test(value) && Number(value) <= maxIndex;
+}
+function internalArrayToObject(array) {
+  const obj = new NullProtoObj();
+  array.forEach((item, i) => {
+    obj[i] = item;
+  });
+  return obj;
+}
+function internalPushStyleArrayToObject(array) {
+  const obj = new NullProtoObj();
+  obj[""] = array.length === 1 ? array[0] : array;
+  return obj;
+}
+
+export { BracketNotationSerializer as B };

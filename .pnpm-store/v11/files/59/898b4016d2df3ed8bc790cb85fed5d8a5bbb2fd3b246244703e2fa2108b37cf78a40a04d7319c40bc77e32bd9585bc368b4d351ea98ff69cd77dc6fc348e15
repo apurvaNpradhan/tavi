@@ -1,0 +1,15 @@
+import { DefineComponent } from 'vue';
+export declare function createVuePlugin<TComponentProps extends Record<string, any>>(name: string, component: DefineComponent<TComponentProps, {}, unknown>): readonly [(props: TComponentProps) => {
+    name: string;
+    component: DefineComponent<TComponentProps, {}, unknown>;
+    props: TComponentProps;
+}, (props: TComponentProps) => {
+    name: string;
+    component: {
+        new (): {
+            $props: import('vue').VNodeProps;
+        };
+        __isFragment: true;
+    };
+    props: TComponentProps;
+}];

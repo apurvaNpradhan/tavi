@@ -1,0 +1,69 @@
+import { ORPCError } from '@orpc/client';
+import { toArray } from '@orpc/shared';
+import { flattenStandardHeader } from '@standard-server/core';
+import { toFetchHeaders, toStandardBody } from '@standard-server/fetch';
+
+class RequestLimitHandlerPlugin {
+  name = "~request-limit";
+  /**
+   * Should limit the original batch request body instead of sub-requests.
+   */
+  after = ["~batch"];
+  /**
+   * Should limit the final body size instead of the compressed one.
+   */
+  before = ["~request-compression"];
+  maxBodySize;
+  constructor(options) {
+    this.maxBodySize = options.maxBodySize;
+  }
+  init(options) {
+    const maxBodySize = this.maxBodySize;
+    const routingInterceptor = async ({ next, ...interceptorOptions }) => {
+      return next({
+        ...interceptorOptions,
+        request: {
+          ...interceptorOptions.request,
+          async resolveBody(hint) {
+            const contentLength = Number(
+              flattenStandardHeader(interceptorOptions.request.headers["content-length"])
+            );
+            if (Number.isFinite(contentLength) && contentLength > maxBodySize) {
+              throw new ORPCError("PAYLOAD_TOO_LARGE");
+            }
+            const stream = await interceptorOptions.request.resolveBody("octet-stream");
+            if (!(stream instanceof ReadableStream)) {
+              return stream;
+            }
+            let currentBodySize = 0;
+            const limitedStream = stream.pipeThrough(
+              new TransformStream({
+                transform(chunk, controller) {
+                  currentBodySize += chunk.byteLength;
+                  if (currentBodySize > maxBodySize) {
+                    controller.error(new ORPCError("PAYLOAD_TOO_LARGE"));
+                    return;
+                  }
+                  controller.enqueue(chunk);
+                }
+              })
+            );
+            const response = new Response(limitedStream, {
+              headers: toFetchHeaders(interceptorOptions.request.headers)
+            });
+            return toStandardBody(response, { hint });
+          }
+        }
+      });
+    };
+    return {
+      ...options,
+      routingInterceptors: [
+        routingInterceptor,
+        ...toArray(options.routingInterceptors)
+      ]
+    };
+  }
+}
+
+export { RequestLimitHandlerPlugin as R };

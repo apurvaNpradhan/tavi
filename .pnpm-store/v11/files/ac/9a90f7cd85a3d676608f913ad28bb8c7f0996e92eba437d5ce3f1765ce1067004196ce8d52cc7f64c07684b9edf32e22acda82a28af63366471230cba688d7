@@ -1,0 +1,17 @@
+import { A11yAuditResult, ExportOptions } from '../types/types.js';
+/**
+ * Export audit results to JSON format
+ */
+export declare function exportToJson(result: A11yAuditResult, _options?: Partial<ExportOptions>): string;
+/**
+ * Export audit results to CSV format
+ */
+export declare function exportToCsv(result: A11yAuditResult, _options?: Partial<ExportOptions>): string;
+/**
+ * Export audit results and trigger download
+ */
+export declare function exportAuditResults(result: A11yAuditResult, options: ExportOptions): void;
+/**
+ * Generate a summary report as a formatted string
+ */
+export declare function generateSummaryReport(result: A11yAuditResult): string;

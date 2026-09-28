@@ -1,0 +1,100 @@
+import { JsonSchemaXNativeType, JsonSchemaFormat } from '@orpc/json-schema';
+import { registry, toJSONSchema } from 'zod/v4/core';
+
+const JSON_SCHEMA_REGISTRY = registry();
+const JSON_SCHEMA_INPUT_REGISTRY = registry();
+const JSON_SCHEMA_OUTPUT_REGISTRY = registry();
+
+class ZodToJsonSchemaConverter {
+  toJSONSchemaParams;
+  cache;
+  constructor({ cache, ...toJSONSchemaParams } = {}) {
+    this.toJSONSchemaParams = toJSONSchemaParams;
+    if (cache) {
+      this.cache = { input: /* @__PURE__ */ new WeakMap(), output: /* @__PURE__ */ new WeakMap() };
+    }
+  }
+  condition(schema, _direction) {
+    return schema?.["~standard"].vendor === "zod";
+  }
+  convert(schema, direction) {
+    const zodSchema = schema;
+    if (this.cache) {
+      const cached = this.cache[direction].get(zodSchema);
+      if (cached) {
+        return cached;
+      }
+    }
+    const result = this.convertUncached(zodSchema, direction);
+    if (this.cache) {
+      this.cache[direction].set(zodSchema, result);
+    }
+    return result;
+  }
+  convertUncached(zodSchema, direction) {
+    const jsonSchema = this.convertZod(zodSchema, direction);
+    let optional = false;
+    try {
+      const result = zodSchema["~standard"].validate(void 0);
+      if (!(result instanceof Promise) && !result.issues) {
+        optional = direction === "input" ? true : result.value === void 0;
+      }
+    } catch {
+    }
+    return [jsonSchema, optional];
+  }
+  convertZod(schema, direction) {
+    const jsonSchema = toJSONSchema(schema, {
+      unrepresentable: "any",
+      ...this.toJSONSchemaParams,
+      target: "draft-2020-12",
+      io: direction,
+      override: (ctx) => {
+        const def = ctx.zodSchema._zod.def;
+        if (def.type === "bigint") {
+          ctx.jsonSchema.type = "string";
+          ctx.jsonSchema.pattern = "^-?[0-9]+$";
+          ctx.jsonSchema["x-native-type"] = JsonSchemaXNativeType.BigInt;
+        } else if (def.type === "date") {
+          ctx.jsonSchema.type = "string";
+          ctx.jsonSchema.format = JsonSchemaFormat.DateTime;
+          ctx.jsonSchema["x-native-type"] = JsonSchemaXNativeType.Date;
+        } else if (def.type === "set") {
+          ctx.jsonSchema.type = "array";
+          ctx.jsonSchema.uniqueItems = true;
+          ctx.jsonSchema.items = this.convertZod(def.valueType, direction);
+          ctx.jsonSchema["x-native-type"] = JsonSchemaXNativeType.Set;
+        } else if (def.type === "map") {
+          ctx.jsonSchema.type = "array";
+          ctx.jsonSchema.items = {
+            type: "array",
+            prefixItems: [
+              this.convertZod(def.keyType, direction),
+              this.convertZod(def.valueType, direction)
+            ],
+            maxItems: 2,
+            minItems: 2
+          };
+          ctx.jsonSchema["x-native-type"] = JsonSchemaXNativeType.Map;
+        }
+        const customJsonSchema = this.getCustomJsonSchema(ctx.zodSchema, direction);
+        if (customJsonSchema) {
+          Object.assign(ctx.jsonSchema, customJsonSchema);
+        }
+        this.toJSONSchemaParams.override?.(ctx);
+      }
+    });
+    const { $schema, ...rest } = jsonSchema;
+    return rest;
+  }
+  getCustomJsonSchema(schema, direction) {
+    const general = JSON_SCHEMA_REGISTRY.get(schema);
+    const directional = direction === "input" ? JSON_SCHEMA_INPUT_REGISTRY.get(schema) : JSON_SCHEMA_OUTPUT_REGISTRY.get(schema);
+    if (general === void 0 && directional === void 0) {
+      return void 0;
+    }
+    return { ...general, ...directional };
+  }
+}
+
+export { JSON_SCHEMA_INPUT_REGISTRY, JSON_SCHEMA_OUTPUT_REGISTRY, JSON_SCHEMA_REGISTRY, ZodToJsonSchemaConverter };

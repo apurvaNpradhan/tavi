@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "organization": "tavi",
+  "region": "us",
+  "api_base": "https://us.sentry.io/api/0",
+  "_comment": "Each dashboard here becomes a top-level dashboard in Sentry. The script creates-or-updates by title, so dashboard changes are auditable in review.",
+  "_comment_field_types": "Widget queries use Sentry's discover query syntax. Performance widgets use dataset: events_analytics_platform (with is_transaction:true) per the current Sentry API. Error widgets use dataset: events.",
+  "_comment_projects": "The `project:` filters must match the project slugs in sentry/alerts.json.",
+  "dashboards": [
+    {
+      "title": "Tavi: Backend Overview",
+      "description": "API errors, latency, and request volume.",
+      "widgets": [
+        {
+          "title": "Error events (count over time)",
+          "displayType": "line",
+          "interval": "1h",
+          "queries": [
+            {
+              "fields": ["count()", "time"],
+              "aggregates": ["count()"],
+              "columns": ["time"],
+              "query": "event.type:error project:tavi-api",
+              "orderby": "time",
+              "limit": 10
+            }
+          ]
+        },
+        {
+          "title": "API p95 latency (ms)",
+          "displayType": "line",
+          "interval": "1h",
+          "queries": [
+            {
+              "fields": ["p95(transaction.duration)", "time"],
+              "aggregates": ["p95(transaction.duration)"],
+              "columns": ["time"],
+              "query": "transaction:*/api/* is_transaction:true project:tavi-api",
+              "orderby": "time",
+              "limit": 10
+            }
+          ]
+        },
+        {
+          "title": "API request volume",
+          "displayType": "line",
+          "interval": "1h",
+          "queries": [
+            {
+              "fields": ["count()", "time"],
+              "aggregates": ["count()"],
+              "columns": ["time"],
+              "query": "transaction:*/api/* is_transaction:true project:tavi-api",
+              "orderby": "time",
+              "limit": 10
+            }
+          ]
+        },
+        {
+          "title": "Top errors by exception type",
+          "displayType": "table",
+          "interval": "24h",
+          "queries": [
+            {
+              "fields": ["exception.type", "count()"],
+              "aggregates": ["count()"],
+              "columns": ["exception.type"],
+              "query": "event.type:error project:tavi-api",
+              "orderby": "-count()",
+              "limit": 10
+            }
+          ]
+        },
+        {
+          "title": "Slowest API routes (p95)",
+          "displayType": "table",
+          "interval": "24h",
+          "queries": [
+            {
+              "fields": ["transaction", "p95(transaction.duration)"],
+              "aggregates": ["p95(transaction.duration)"],
+              "columns": ["transaction"],
+              "query": "transaction:*/api/* is_transaction:true project:tavi-api",
+              "orderby": "-p95(transaction.duration)",
+              "limit": 10
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Tavi: Frontend Overview",
+      "description": "Web errors, page loads, and web vitals.",
+      "widgets": [
+        {
+          "title": "Web error events (count over time)",
+          "displayType": "line",
+          "interval": "1h",
+          "queries": [
+            {
+              "fields": ["count()", "time"],
+              "aggregates": ["count()"],
+              "columns": ["time"],
+              "query": "event.type:error project:tavi-web",
+              "orderby": "time",
+              "limit": 10
+            }
+          ]
+        },
+        {
+          "title": "Page load p95 (ms)",
+          "displayType": "line",
+          "interval": "1h",
+          "queries": [
+            {
+              "fields": ["p95(transaction.duration)", "time"],
+              "aggregates": ["p95(transaction.duration)"],
+              "columns": ["time"],
+              "query": "project:tavi-web is_transaction:true",
+              "orderby": "time",
+              "limit": 10
+            }
+          ]
+        },
+        {
+          "title": "LCP (p75, ms)",
+          "displayType": "line",
+          "interval": "1h",
+          "queries": [
+            {
+              "fields": ["p75(measurements.lcp)", "time"],
+              "aggregates": ["p75(measurements.lcp)"],
+              "columns": ["time"],
+              "query": "project:tavi-web is_transaction:true",
+              "orderby": "time",
+              "limit": 10
+            }
+          ]
+        },
+        {
+          "title": "Top error pages",
+          "displayType": "table",
+          "interval": "24h",
+          "queries": [
+            {
+              "fields": ["transaction", "count()"],
+              "aggregates": ["count()"],
+              "columns": ["transaction"],
+              "query": "event.type:error project:tavi-web",
+              "orderby": "-count()",
+              "limit": 10
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,153 @@
+import { StandardBody } from '@standard-server/core';
+import { Segment } from '@orpc/shared';
+
+type BracketNotationSerializeResult = [string, unknown][];
+interface BracketNotationSerializerOptions {
+    /**
+     * Maximum explicit array index allowed during deserialization (e.g., `arr[0]`, `arr[999]`).
+     * If the index exceeds this limit, the array is deserialized as an object instead.
+     *
+     * This guards against memory exhaustion attacks where malicious input uses extremely large
+     * indices (e.g., `?arr[4294967296]=value`). Although orpc uses sparse arrays handle large indices
+     * efficiently, downstream code may inadvertently densify them - creating millions of
+     * undefined slots and exhausting memory.
+     *
+     * NOTE: Does not apply to append-style notation (e.g., `arr[]`).
+     *
+     * @default 999 (array with 1,000 elements)
+     */
+    maxExplicitDeserializingArrayIndex?: number;
+}
+declare class BracketNotationSerializer {
+    private readonly maxExplicitDeserializingArrayIndex;
+    constructor(options?: BracketNotationSerializerOptions);
+    serialize(data: unknown): BracketNotationSerializeResult;
+    private internalSerialize;
+    deserialize(serialized: BracketNotationSerializeResult): Record<string, unknown>;
+    stringifyPath(segments: readonly Segment[]): string;
+    parsePath(path: string): string[];
+}
+
+type OpenAPIJsonSerialization = {
+    json: unknown;
+    maps?: undefined;
+    blobs?: undefined;
+} | {
+    json: unknown;
+    maps: Segment[][];
+    blobs: Blob[];
+};
+interface OpenAPIJsonSerializerHandler {
+    condition(value: unknown): boolean;
+    serialize(value: any): unknown;
+    /**
+     * If false, the result of this serializer will not be further processed by other serializers,
+     * even if it matches their conditions and treat it as final serialized value.
+     * This can be useful for serializers that return primitive values, which should not be further processed.
+     * to improve performance and avoid potential issues with other serializers.
+     *
+     * @default false
+     */
+    isTerminal?: boolean;
+}
+interface OpenAPIJsonSerializerOptions {
+    /**
+     * Extend or override the built-in type handlers used during serialization.
+     *
+     * Each key is a unique type identifier (e.g. `"date"`, `"bigint"`) and maps to a handler
+     * that defines how to detect and serialize values of that type.
+     *
+     * **Extending:** Add new keys to support custom types:
+     * ```ts
+     * handlers: {
+     *   buffer: {
+     *     condition: (v) => v instanceof Buffer,
+     *     serialize: (v: Buffer) => v.toString('base64'),
+     *     isTerminal: true,
+     *   }
+     * }
+     * ```
+     *
+     * **Overriding:** Use an existing key to replace a built-in handler:
+     * ```ts
+     * handlers: {
+     *   date: {
+     *     condition: (v) => v instanceof Date,
+     *     serialize: (v: Date) => v.getTime(),
+     *     isTerminal: true,
+     *   }
+     * }
+     * ```
+     *
+     * **Disabling:** Set a key to `undefined` to remove a built-in handler:
+     * ```ts
+     * handlers: { url: undefined }
+     * ```
+     *
+     * Built-in type keys: `undefined`, `bigint`, `date`, `nan`, `url`, `set`, `map`.
+     */
+    handlers?: Record<string, undefined | OpenAPIJsonSerializerHandler> | undefined;
+    /**
+     * If true, properties with undefined values will be omitted during serialization.
+     *
+     * @default true
+     */
+    omitUndefinedProperties?: boolean | undefined;
+}
+declare class OpenAPIJsonSerializer {
+    private readonly inlineBuiltInHandlers;
+    private readonly handlerEntries;
+    private readonly omitUndefinedProperties;
+    constructor(options?: OpenAPIJsonSerializerOptions);
+    serialize(data: unknown): OpenAPIJsonSerialization;
+    /**
+     * `segments` is a shared mutable stack (push/pop while walking),
+     * so it must be copied before being stored in `maps`.
+     */
+    private serializeValue;
+    deserialize(serialized: OpenAPIJsonSerialization): unknown;
+}
+
+interface OpenAPISerializerSerializeOptions {
+    /**
+     * Use FormData for serialization when nested blobs are present.
+     * Does not apply to root-level Blob values.
+     *
+     * @default true
+     */
+    useFormDataForBlobFields?: boolean;
+    /**
+     * When enabled, the serialized output is always returned as a FormData instance using bracket notation.
+     *
+     * @default false
+     */
+    asFormData?: boolean | undefined;
+}
+interface OpenAPISerializerOptions extends OpenAPIJsonSerializerOptions {
+    /**
+     * Options for bracket notation serializer, like maxExplicitDeserializingArrayIndex
+     */
+    bracketNotation?: BracketNotationSerializerOptions | undefined;
+    /**
+     * Default options for serialize method
+     */
+    serialize?: OpenAPISerializerSerializeOptions | undefined;
+}
+/**
+ * Handles one-way serialization of oRPC payloads into JSON-friendly formats,
+ * partially supporting complex data types beyond plain JSON such as `Date`, `BigInt`, and `Set`.
+ *
+ * @see {@link https://orpc.dev/docs/openapi/serializer | OpenAPI Serializer}
+ */
+declare class OpenAPISerializer {
+    private readonly jsonSerializer;
+    private readonly bracketNotation;
+    private readonly defaultSerializeOptions;
+    constructor({ bracketNotation, serialize, ...options }?: OpenAPISerializerOptions);
+    serialize(data: unknown, options?: OpenAPISerializerSerializeOptions): StandardBody;
+    private serializeValue;
+    deserialize(data: StandardBody): unknown;
+}
+
+export { OpenAPISerializer as O, BracketNotationSerializer as a, OpenAPIJsonSerializer as d };
+export type { BracketNotationSerializeResult as B, BracketNotationSerializerOptions as b, OpenAPIJsonSerialization as c, OpenAPIJsonSerializerHandler as e, OpenAPIJsonSerializerOptions as f, OpenAPISerializerOptions as g, OpenAPISerializerSerializeOptions as h };

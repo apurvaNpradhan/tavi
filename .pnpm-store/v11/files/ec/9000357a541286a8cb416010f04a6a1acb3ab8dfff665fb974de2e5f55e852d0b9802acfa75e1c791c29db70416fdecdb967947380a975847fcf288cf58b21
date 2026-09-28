@@ -1,0 +1,9 @@
+"use client";
+"use client";
+import { A11yDevtoolsCore as A11yDevtoolsCore$1, A11yDevtoolsCoreNoOp } from "./core.js";
+//#region src/core/index.ts
+var A11yDevtoolsCore = process.env.NODE_ENV !== "development" ? A11yDevtoolsCoreNoOp : A11yDevtoolsCore$1;
+//#endregion
+export { A11yDevtoolsCore };
+
+//# sourceMappingURL=index.js.map

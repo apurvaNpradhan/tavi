@@ -1,0 +1,8 @@
+import { constructCoreClass } from "@tanstack/devtools-utils/solid";
+//#region src/core/core.tsx
+/** @jsxImportSource solid-js */
+var [A11yDevtoolsCore, A11yDevtoolsCoreNoOp] = constructCoreClass(() => import("./components/index.js"));
+//#endregion
+export { A11yDevtoolsCore, A11yDevtoolsCoreNoOp };
+
+//# sourceMappingURL=core.js.map

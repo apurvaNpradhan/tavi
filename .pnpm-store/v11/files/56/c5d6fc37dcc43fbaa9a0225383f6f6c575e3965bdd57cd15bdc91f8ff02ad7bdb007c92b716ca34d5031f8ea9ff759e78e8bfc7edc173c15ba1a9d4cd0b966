@@ -1,0 +1,167 @@
+import { toArray, matchesHttpPath, mergeHttpPath, value, getTracer, stringifyJSON } from '@orpc/shared';
+
+class OpenAPIReferenceHandlerPlugin {
+  name = "~openapi-reference";
+  spec;
+  allow;
+  specPath;
+  provider;
+  providerConfig;
+  providerScriptUrl;
+  providerCssUrl;
+  docsPath;
+  docsTitle;
+  docsHead;
+  constructor(options) {
+    this.spec = options.spec;
+    this.allow = options.allow;
+    this.specPath = options.specPath ?? "/spec.json";
+    this.provider = options.provider ?? "scalar";
+    this.providerConfig = options.providerConfig;
+    this.providerScriptUrl = options.providerScriptUrl;
+    this.providerCssUrl = options.providerCssUrl;
+    this.docsTitle = options.docsTitle;
+    this.docsPath = options.docsPath ?? "/";
+    this.docsHead = options.docsHead ?? "";
+  }
+  init(options) {
+    return {
+      ...options,
+      routingInterceptors: [
+        // Run after user-provided routing interceptors so they can capture the ui/spec responses
+        ...toArray(options.routingInterceptors),
+        async ({ next, ...routingInterceptorOptions }) => {
+          const result = await next();
+          if (result.matched || routingInterceptorOptions.request.method !== "GET") {
+            return result;
+          }
+          const isSpecPath = matchesHttpPath(
+            routingInterceptorOptions.request.url,
+            routingInterceptorOptions.prefix ? mergeHttpPath(routingInterceptorOptions.prefix, this.specPath) : this.specPath
+          );
+          const isDocsPath = matchesHttpPath(
+            routingInterceptorOptions.request.url,
+            routingInterceptorOptions.prefix ? mergeHttpPath(routingInterceptorOptions.prefix, this.docsPath) : this.docsPath
+          );
+          if (!isSpecPath && !isDocsPath) {
+            return result;
+          }
+          if (await value(this.allow, routingInterceptorOptions) === false) {
+            return result;
+          }
+          const span = getTracer()?.getActiveSpan();
+          const spec = await value(this.spec, routingInterceptorOptions);
+          if (isSpecPath) {
+            span?.updateName(`${routingInterceptorOptions.request.method} ${routingInterceptorOptions.request.url} (openapi spec)`);
+            const specFile = new File([stringifyJSON(spec)], `${spec.info.title}.json`, {
+              type: "application/json"
+            });
+            return { matched: true, response: { status: 200, headers: {}, body: specFile } };
+          }
+          span?.updateName(`${routingInterceptorOptions.request.method} ${routingInterceptorOptions.request.url} (${this.provider} ui)`);
+          const docsTitle = await value(this.docsTitle, routingInterceptorOptions) ?? spec.info.title;
+          const docsHead = await value(this.docsHead, routingInterceptorOptions);
+          let html;
+          if (this.provider === "swagger") {
+            const scriptUrl = this.providerScriptUrl ?? "https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js";
+            const cssUrl = this.providerCssUrl ?? "https://unpkg.com/swagger-ui-dist/swagger-ui.css";
+            const config = {
+              dom_id: "#app",
+              spec,
+              deepLinking: true,
+              presets: [
+                "SwaggerUIBundle.presets.apis",
+                "SwaggerUIBundle.presets.standalone"
+              ],
+              plugins: [
+                "SwaggerUIBundle.plugins.DownloadUrl"
+              ],
+              ...this.providerConfig
+            };
+            html = `
+            <!doctype html>
+            <html>
+            <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <title>${escapeHtmlEntities(docsTitle)}</title>
+                <link rel="stylesheet" type="text/css" href="${escapeHtmlEntities(cssUrl)}" />
+                ${docsHead}
+            </head>
+            <body>
+                <div id="app"></div>
+
+                <script src="${escapeHtmlEntities(scriptUrl)}"><\/script>
+
+                <!-- IMPORTANT: assign to a variable first to prevent ), ( in values breaking the call expression. -->
+                <!-- IMPORTANT: escapeJsonForHtml ensures <, > cannot terminate the <\/script> tag prematurely. -->
+                <script>
+                    const swaggerConfig = ${escapeJsonForHtml(config).replace(/"(SwaggerUIBundle\.[.a-zA-Z0-9]+)"/g, "$1")}
+
+                    window.onload = () => {
+                        window.ui = SwaggerUIBundle(swaggerConfig)
+                    }
+                <\/script>
+            </body>
+            </html>
+            `;
+          } else {
+            const scriptUrl = this.providerScriptUrl ?? "https://cdn.jsdelivr.net/npm/@scalar/api-reference";
+            const cssUrl = this.providerCssUrl;
+            const config = {
+              content: stringifyJSON(spec),
+              ...this.providerConfig
+            };
+            html = `
+            <!doctype html>
+            <html>
+            <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <title>${escapeHtmlEntities(docsTitle)}</title>
+                ${cssUrl ? `<link rel="stylesheet" type="text/css" href="${escapeHtmlEntities(cssUrl)}" />` : ""}
+                ${docsHead}
+            </head>
+            <body>
+                <div id="app"></div>
+        
+                <script src="${escapeHtmlEntities(scriptUrl)}"><\/script>
+        
+                <!-- IMPORTANT: assign to a variable first to prevent ), ( in values breaking the call expression. -->
+                <!-- IMPORTANT: escapeJsonForHtml ensures <, > cannot terminate the <\/script> tag prematurely. -->
+                <script>
+                    const scalarConfig = ${escapeJsonForHtml(config)}
+
+                    Scalar.createApiReference('#app', scalarConfig)
+                <\/script>
+            </body>
+            </html>
+            `;
+          }
+          const htmlBlob = new Blob([html], {
+            type: "text/html"
+          });
+          return {
+            matched: true,
+            response: {
+              status: 200,
+              headers: {
+                "content-disposition": []
+                // disable auto-gen header
+              },
+              body: htmlBlob
+            }
+          };
+        }
+      ]
+    };
+  }
+}
+function escapeHtmlEntities(s) {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escapeJsonForHtml(obj) {
+  return stringifyJSON(obj).replace(/&/g, "\\u0026").replace(/'/g, "\\u0027").replace(/</g, "\\u003C").replace(/>/g, "\\u003E").replace(/\//g, "\\u002F");
+}
+
+export { OpenAPIReferenceHandlerPlugin };

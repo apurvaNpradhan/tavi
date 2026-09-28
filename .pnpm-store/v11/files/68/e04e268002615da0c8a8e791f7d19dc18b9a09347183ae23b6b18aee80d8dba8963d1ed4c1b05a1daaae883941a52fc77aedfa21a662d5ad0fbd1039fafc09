@@ -1,0 +1,6 @@
+/** @jsxImportSource solid-js */
+interface A11ySettingsOverlayProps {
+    onClose: () => void;
+}
+export declare function A11ySettingsOverlay(props: A11ySettingsOverlayProps): import("solid-js").JSX.Element;
+export {};

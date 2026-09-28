@@ -1,0 +1,116 @@
+const DROP = Symbol("drop");
+const HTTP_METHODS_UP_TO_V31 = [
+  "delete",
+  "get",
+  "head",
+  "options",
+  "patch",
+  "post",
+  "put",
+  "trace"
+];
+function operationFields(convert) {
+  return Object.fromEntries(HTTP_METHODS_UP_TO_V31.map((method) => [method, convert]));
+}
+function isRecord(value) {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+function setOwn(object, key, value) {
+  if (key === "__proto__") {
+    Object.defineProperty(object, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true
+    });
+  } else {
+    object[key] = value;
+  }
+}
+function cloneValue(value, seen) {
+  if (!(Array.isArray(value) || isRecord(value))) {
+    return value;
+  }
+  const existing = seen.get(value);
+  if (existing !== void 0) {
+    return existing;
+  }
+  if (Array.isArray(value)) {
+    const out2 = [];
+    seen.set(value, out2);
+    for (const item of value) {
+      out2.push(cloneValue(item, seen));
+    }
+    return out2;
+  }
+  const out = {};
+  seen.set(value, out);
+  for (const [key, item] of Object.entries(value)) {
+    setOwn(out, key, cloneValue(item, seen));
+  }
+  return out;
+}
+function deepClone(value) {
+  if (!(Array.isArray(value) || isRecord(value))) {
+    return value;
+  }
+  return cloneValue(value, /* @__PURE__ */ new WeakMap());
+}
+const converting = /* @__PURE__ */ new WeakMap();
+function convertRecord(value, fields, finish) {
+  if (!isRecord(value)) {
+    return deepClone(value);
+  }
+  const inProgress = converting.get(value);
+  if (inProgress !== void 0) {
+    return inProgress;
+  }
+  const out = {};
+  converting.set(value, out);
+  try {
+    for (const [key, item] of Object.entries(value)) {
+      const convert = Object.hasOwn(fields, key) ? fields[key] : void 0;
+      if (convert === DROP) {
+        continue;
+      }
+      const converted = convert === void 0 ? deepClone(item) : convert(item, value);
+      if (converted !== DROP) {
+        setOwn(out, key, converted);
+      }
+    }
+    return finish === void 0 ? out : finish(out, value);
+  } finally {
+    converting.delete(value);
+  }
+}
+function mapRecord(value, convert) {
+  if (!isRecord(value)) {
+    return deepClone(value);
+  }
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    const converted = convert(item, key);
+    if (converted !== DROP) {
+      setOwn(out, key, converted);
+    }
+  }
+  return out;
+}
+function mapArray(value, convert) {
+  if (!Array.isArray(value)) {
+    return deepClone(value);
+  }
+  return value.map((item) => convert(item)).filter((item) => item !== DROP);
+}
+function getRef(value) {
+  if (isRecord(value) && typeof value.$ref === "string") {
+    return value.$ref;
+  }
+  return void 0;
+}
+
+export { DROP as D, mapArray as a, convertRecord as c, deepClone as d, getRef as g, isRecord as i, mapRecord as m, operationFields as o };

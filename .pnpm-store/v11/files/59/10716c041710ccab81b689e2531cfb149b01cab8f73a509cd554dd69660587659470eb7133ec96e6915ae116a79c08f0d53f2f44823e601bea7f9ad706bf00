@@ -1,0 +1,23 @@
+import { Fragment } from "vue";
+//#region src/vue/plugin.ts
+function createVuePlugin(name, component) {
+	function Plugin(props) {
+		return {
+			name,
+			component,
+			props
+		};
+	}
+	function NoOpPlugin(props) {
+		return {
+			name,
+			component: Fragment,
+			props
+		};
+	}
+	return [Plugin, NoOpPlugin];
+}
+//#endregion
+export { createVuePlugin };
+
+//# sourceMappingURL=plugin.js.map

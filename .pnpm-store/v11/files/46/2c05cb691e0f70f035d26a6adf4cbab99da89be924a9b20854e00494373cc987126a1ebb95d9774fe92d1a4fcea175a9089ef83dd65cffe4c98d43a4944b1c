@@ -1,0 +1,152 @@
+import { O as OpenAPISerializer } from './shared/openapi.Dl3gew1x.js';
+export { B as BracketNotationSerializeResult, a as BracketNotationSerializer, b as BracketNotationSerializerOptions, c as OpenAPIJsonSerialization, d as OpenAPIJsonSerializer, e as OpenAPIJsonSerializerHandler, f as OpenAPIJsonSerializerOptions, g as OpenAPISerializerOptions, h as OpenAPISerializerSerializeOptions } from './shared/openapi.Dl3gew1x.js';
+import { ClientContext, ORPCClientOptions, ClientLink } from '@orpc/client';
+export { COMMON_ERROR_STATUS_MAP } from '@orpc/client';
+import { RouterContract, RouterContractClient, AnyProcedureContract, ProcedureContract } from '@orpc/contract';
+import { J as JsonifiedClient, O as OpenAPIVersion, a as OpenAPIDocument } from './shared/openapi.DI21x5Yo.js';
+export { b as JsonifiedArray, c as JsonifiedClientError, d as JsonifiedValue } from './shared/openapi.DI21x5Yo.js';
+export { a as OpenAPIFunction, O as OpenAPIMeta, b as OpenAPIMetaPlugin, c as OpenAPIMethodMetaPlugin, d as OpenAPIPathMetaPlugin, e as OpenAPIPrefixMetaPlugin, f as OpenAPISpecMetaPlugin, g as getOpenAPIMeta, o as openapi } from './shared/openapi.Cem81Zhm.js';
+import { JsonSchema, JsonSchemaConverter } from '@orpc/json-schema';
+import { AnyRouter, AnyProcedure } from '@orpc/server';
+import { Public, Value } from '@orpc/shared';
+import { OpenAPIV3_2 } from '@openapi-spec/types';
+export { OpenAPIV3_0, OpenAPIV3_1, OpenAPIV3_2 } from '@openapi-spec/types';
+export { StandardBodyHint } from '@standard-server/core';
+
+interface ContractJsonifiedClientFactory<TClientContext extends ClientContext> {
+    <T extends RouterContract>(contract: T): JsonifiedClient<RouterContractClient<T, TClientContext>>;
+}
+interface ContractJsonifiedClientFactoryOptions<TClientContext extends ClientContext> extends Pick<ORPCClientOptions<JsonifiedClient<RouterContractClient<RouterContract, TClientContext>>>, 'interceptors' | 'scoped'> {
+    /**
+     * An optional reference to the root router-contract.
+     * When provided, the client factory will automatically register the passed contract
+     * into the router at the path defined by `meta.path`.
+     */
+    contractRef?: undefined | RouterContract;
+}
+declare function createContractJsonifiedClientFactory<TClientContext extends ClientContext>(link: ClientLink<TClientContext>, options?: ContractJsonifiedClientFactoryOptions<TClientContext>): ContractJsonifiedClientFactory<TClientContext>;
+
+declare const DEFAULT_OPENAPI_METHOD = "POST";
+declare const DEFAULT_OPENAPI_SUCCESS_DESCRIPTION = "OK";
+declare const DEFAULT_OPENAPI_INPUT_STRUCTURE = "compact";
+declare const DEFAULT_OPENAPI_OUTPUT_STRUCTURE = "compact";
+
+/**
+ * GET and HEAD requests cannot carry a request body,
+ * so their compact input maps to query parameters instead.
+ */
+declare function isBodylessMethod(method: string): boolean;
+/**
+ * Dynamic parameters are always returned in path order.
+ */
+declare function getDynamicPathParams(path: `/${string}`): {
+    segment: string;
+    startIndex: number;
+    parameterName: string;
+    allowsSlash: boolean;
+}[] | undefined;
+
+declare class OpenAPIGeneratorError extends TypeError {
+}
+interface OpenAPIErrorBodyDefinition {
+    code: string;
+    defaultMessage: string | undefined;
+    dataOptional: boolean;
+    dataJsonSchema: JsonSchema;
+}
+
+interface OpenAPIGeneratorOptions {
+    converters?: JsonSchemaConverter[] | undefined;
+    /**
+     * The serializer used to serialize the generated OpenAPI documentation
+     */
+    serializer?: Public<OpenAPISerializer> | undefined;
+}
+interface OpenAPIGeneratorGenerateOptions<TVersion extends OpenAPIVersion> {
+    /**
+     * The OpenAPI version of the generated document.
+     * The document is generated as OpenAPI 3.2 and downgraded when an older version is requested.
+     * The minor version selects the conversion, the document carries the exact value, such as `3.1.0`.
+     *
+     * @default '3.2.0'
+     */
+    version?: TVersion | undefined;
+    /**
+     * OpenAPI 3.2 document fields to start from, such as `info`, `servers`, or `components`.
+     * They are downgraded with the rest of the document when an older `version` is requested.
+     * The `openapi` field is derived from `version`.
+     */
+    base?: Partial<Omit<OpenAPIV3_2.OpenAPIObject, 'openapi'>> | undefined;
+    /**
+     * Root-level `$defs` are always moved into `components.schemas`.
+     * Use this to customize the component name of a hoisted def.
+     *
+     * @remarks
+     * - The returned name is a preference, conflicting names are still postfixed (`Planet`, `PlanetInput`, `Planet2`, ...).
+     * - Return `undefined` to keep the original def name.
+     *
+     * @default defName => defName
+     */
+    customComponentName?: (defName: string, defSchema: JsonSchema) => string | undefined;
+    /**
+     * Filter procedures. Return `false` to exclude a procedure from the OpenAPI specification.
+     *
+     * @default true
+     */
+    filter?: Value<boolean, [contract: AnyProcedureContract | AnyProcedure, path: string[]]>;
+    /**
+     * Define a custom JSON schema for the error response body when using
+     * type-safe errors. Helps align ORPC error formatting with existing API
+     * response standards or conventions.
+     *
+     * @remarks
+     * - Return `null | undefined` to use the default error response body shaper.
+     * - The schema is an OpenAPI 3.2 Schema Object, it is downgraded with the rest of the document when an older `version` is requested.
+     */
+    customErrorResponseBodySchema?: Value<JsonSchema | undefined | null, [
+        definedErrors: OpenAPIErrorBodyDefinition[],
+        status: number
+    ]>;
+    /**
+     * Mapping ORPCError Code -> HTTP Status Code
+     *
+     * @default COMMON_ERROR_STATUS_MAP
+     */
+    errorStatusMap?: Record<string, number> | undefined;
+}
+/**
+ * Generates an OpenAPI document from a contract or router.
+ * Relies on JSON schema converters to translate input, output, and error schemas into JSON Schemas.
+ *
+ * @see {@link https://orpc.dev/docs/openapi/specification#openapi-generator | OpenAPI Specification - OpenAPI Generator}
+ */
+declare class OpenAPIGenerator {
+    private readonly serializer;
+    private readonly converter;
+    constructor(options?: OpenAPIGeneratorOptions);
+    generate<TVersion extends OpenAPIVersion = '3.2.0'>(router: RouterContract | AnyRouter, options?: OpenAPIGeneratorGenerateOptions<TVersion>): Promise<OpenAPIDocument<TVersion>>;
+    private convertSchema;
+    private convertSchemas;
+}
+
+type PopulatedContractRouterOpenAPIPaths<T extends RouterContract> = T extends ProcedureContract<infer UInputSchema, infer UOutputSchema, infer UErrors> ? ProcedureContract<UInputSchema, UOutputSchema, UErrors> : {
+    [K in keyof T]: T[K] extends RouterContract ? PopulatedContractRouterOpenAPIPaths<T[K]> : never;
+};
+interface PopulateRouterContractOpenAPIPathsOptions {
+    /**
+     * Base path segments.
+     */
+    path?: undefined | string[];
+}
+/**
+ * Automatically populates missing openapi.path using router structure.
+ *
+ * Builds paths by joining router keys with `/`.
+ * Useful when you want to ensure all contracts define openapi.path, such as for NestJS integration requirements.
+ *
+ * @see {@link https://orpc.dev/docs/integrations/nest | Implement oRPC contract with NestJS}
+ */
+declare function populateRouterContractOpenAPIPaths<T extends RouterContract>(router: T, options?: PopulateRouterContractOpenAPIPathsOptions): PopulatedContractRouterOpenAPIPaths<T>;
+
+export { DEFAULT_OPENAPI_INPUT_STRUCTURE, DEFAULT_OPENAPI_METHOD, DEFAULT_OPENAPI_OUTPUT_STRUCTURE, DEFAULT_OPENAPI_SUCCESS_DESCRIPTION, JsonifiedClient, OpenAPIDocument, OpenAPIGenerator, OpenAPIGeneratorError, OpenAPISerializer, OpenAPIVersion, createContractJsonifiedClientFactory, getDynamicPathParams, isBodylessMethod, populateRouterContractOpenAPIPaths };
+export type { ContractJsonifiedClientFactory, ContractJsonifiedClientFactoryOptions, OpenAPIErrorBodyDefinition, OpenAPIGeneratorGenerateOptions, OpenAPIGeneratorOptions, PopulateRouterContractOpenAPIPathsOptions, PopulatedContractRouterOpenAPIPaths };

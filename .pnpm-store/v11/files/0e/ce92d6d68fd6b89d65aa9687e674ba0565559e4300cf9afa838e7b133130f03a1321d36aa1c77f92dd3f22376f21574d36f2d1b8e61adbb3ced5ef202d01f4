@@ -1,0 +1,107 @@
+import { Context } from '@orpc/server';
+import { StandardHandlerPlugin, StandardHandlerRoutingInterceptorOptions, StandardHandlerOptions } from '@orpc/server/standard';
+import { Value, Promisable } from '@orpc/shared';
+import { ApiReferenceConfiguration } from '@scalar/api-reference';
+import { StandardUrl } from '@standard-server/core';
+import { SwaggerUIOptions } from 'swagger-ui';
+import { OpenAPIDocument, OpenAPIVersion } from '../index.mjs';
+import '@openapi-spec/types';
+import '@orpc/client';
+
+type OpenAPIReferenceHandlerPluginProvider = 'scalar' | 'swagger';
+interface OpenAPIReferenceHandlerPluginScalarConfig extends Partial<ApiReferenceConfiguration> {
+}
+interface OpenAPIReferenceHandlerPluginSwaggerConfig extends Partial<Omit<SwaggerUIOptions, 'dom_id' | 'presets' | 'plugins'>> {
+    dom_id?: undefined | never;
+    presets?: undefined | `SwaggerUIBundle.${string}`[];
+    plugins?: undefined | `SwaggerUIBundle.${string}`[];
+}
+interface OpenAPIReferenceHandlerPluginOptions<T extends Context, TProvider extends OpenAPIReferenceHandlerPluginProvider> {
+    /**
+     * A static or dynamic OpenAPI document to serve.
+     * Receives routing interceptor options when provided as a function.
+     */
+    spec: Value<Promisable<OpenAPIDocument<OpenAPIVersion>>, [StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * Determines whether the docs UI and OpenAPI JSON are allowed to be served for a request.
+     * When it resolves to `false`, the request falls through as unmatched,
+     * as if the plugin were not installed. Useful for restricting access
+     * to authenticated users.
+     */
+    allow?: Value<Promisable<boolean>, [StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * The URL path at which to serve the OpenAPI JSON.
+     *
+     * @default '/spec.json'
+     */
+    specPath?: StandardUrl;
+    /**
+     * The UI provider to use for rendering the API reference.
+     *
+     * @default 'scalar'
+     */
+    provider?: TProvider;
+    /**
+     * Provider-specific configuration passed directly to the chosen UI library.
+     * Options differ depending on `provider`.
+     */
+    providerConfig?: undefined | (TProvider extends 'swagger' ? OpenAPIReferenceHandlerPluginSwaggerConfig : OpenAPIReferenceHandlerPluginScalarConfig);
+    /**
+     * URL for the provider's main script bundle.
+     *
+     * @default 'https://cdn.jsdelivr.net/npm/@scalar/api-reference' | 'https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js'
+     */
+    providerScriptUrl?: undefined | string;
+    /**
+     * URL for the provider's stylesheet.
+     *
+     * @default undefined | 'https://unpkg.com/swagger-ui-dist/swagger-ui.css'
+     */
+    providerCssUrl?: undefined | string;
+    /**
+     * The URL path at which to serve the API reference UI.
+     *
+     * @default '/'
+     */
+    docsPath?: StandardUrl;
+    /**
+     * The document title for the API reference UI.
+     *
+     * @default spec.info.title
+     */
+    docsTitle?: Value<Promisable<string>, [StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * Raw HTML to inject into the `<head>` of the API reference page.
+     * Useful for custom stylesheets, meta tags, or scripts.
+     *
+     * @default ''
+     */
+    docsHead?: Value<Promisable<string>, [StandardHandlerRoutingInterceptorOptions<T>]>;
+}
+/**
+ * Serves API reference documentation powered by Scalar or Swagger UI,
+ * and exposes the OpenAPI specification as JSON.
+ *
+ * @remarks
+ * **Note**: By default, the API reference UI is served from `/` and the OpenAPI specification from `/spec.json`.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/openapi-reference | OpenAPI Reference Plugin (Swagger/Scalar)}
+ */
+declare class OpenAPIReferenceHandlerPlugin<T extends Context, TProvider extends OpenAPIReferenceHandlerPluginProvider> implements StandardHandlerPlugin<T> {
+    name: string;
+    private readonly spec;
+    private readonly allow;
+    private readonly specPath;
+    private readonly provider;
+    private readonly providerConfig;
+    private readonly providerScriptUrl;
+    private readonly providerCssUrl;
+    private readonly docsPath;
+    private readonly docsTitle;
+    private readonly docsHead;
+    constructor(options: OpenAPIReferenceHandlerPluginOptions<T, TProvider>);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+export { OpenAPIReferenceHandlerPlugin };
+export type { OpenAPIReferenceHandlerPluginOptions, OpenAPIReferenceHandlerPluginProvider, OpenAPIReferenceHandlerPluginScalarConfig, OpenAPIReferenceHandlerPluginSwaggerConfig };

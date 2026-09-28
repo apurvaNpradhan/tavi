@@ -1,0 +1,8 @@
+export { C as CompositeStandardHandlerPlugin, R as RPCHandlerCodec, a as RPCMatcher, b as RPC_DEFAULT_ALLOW_METHODS, S as StandardHandler, T as TracingHandlerPlugin } from '../../shared/server.C0lFtoHU.mjs';
+export { r as resolveFriendlyStandardHandlerHandleOptions } from '../../shared/server.W91HSRkE.mjs';
+import '@orpc/client';
+import '@orpc/shared';
+import '@standard-server/core';
+import '../../shared/server.Djb_ebJT.mjs';
+import '@orpc/contract';
+import '../../shared/server.BynNaBBA.mjs';

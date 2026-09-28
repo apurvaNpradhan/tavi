@@ -1,0 +1,1 @@
+import { CodeInline, CodeInlineProps } from "./code-inline.cjs";

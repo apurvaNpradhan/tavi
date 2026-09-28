@@ -1,0 +1,110 @@
+import { runWithSignal, AbortError, sleep, promiseWithResolvers, sequential, loadBytes, toStringOrBytes } from '@orpc/shared';
+import { ClientPeer, encodePeerMessage, decodePeerMessage, isServerPeerSendMessage } from '@standard-server/peer';
+import { S as StandardLink, R as RPCLinkCodec } from '../../shared/client.VXsLhJtT.mjs';
+import '@standard-server/core';
+import '@standard-server/fetch';
+import '../../shared/client.BYHnU_Z3.mjs';
+import '../../shared/client.Dtv1JPkU.mjs';
+
+const WEBSOCKET_CONNECTING = 0;
+const WEBSOCKET_OPEN = 1;
+class WebSocketLinkTransport {
+  connect;
+  reconnectEnabled;
+  reconnectDelay;
+  reconnectMaxAttempt;
+  reconnectOnCloseEnabled;
+  reconnectOnCloseDelay;
+  encodePeerMessageOptions;
+  decodePeerMessageOptions;
+  constructor(options) {
+    this.connect = options.connect;
+    this.reconnectEnabled = options.reconnect?.enabled ?? false;
+    this.reconnectDelay = options.reconnect?.delay ?? ((info) => info.attempt === 1 ? 0 : 2e3);
+    this.reconnectMaxAttempt = options.reconnect?.maxAttempt ?? Infinity;
+    this.reconnectOnCloseEnabled = this.reconnectEnabled && (options.reconnect?.onClose?.enabled ?? false);
+    this.reconnectOnCloseDelay = options.reconnect?.onClose?.delay ?? 0;
+    this.encodePeerMessageOptions = options.encodePeerMessage;
+    this.decodePeerMessageOptions = options.decodePeerMessage;
+    if (options.connectOnInit) {
+      this.getConnectedPeer().catch(() => {
+      });
+    }
+  }
+  async send(standardRequest, _path, _options) {
+    const peer = await runWithSignal(
+      standardRequest.signal,
+      () => this.getConnectedPeer()
+    );
+    return peer.request(standardRequest);
+  }
+  totalAttempt = 0;
+  attempt = 0;
+  current;
+  async getConnectedPeer() {
+    const current = this.current;
+    const resolved = await current;
+    if (resolved && (!this.reconnectEnabled || resolved.websocket.readyState === WEBSOCKET_OPEN)) {
+      this.attempt = 0;
+      return resolved.peer;
+    }
+    if (current !== this.current) {
+      return this.getConnectedPeer();
+    }
+    if (this.attempt >= this.reconnectMaxAttempt) {
+      throw new AbortError(`WebSocket reconnect failed after ${this.attempt} attempt(s)`);
+    }
+    this.current = (async () => {
+      this.totalAttempt += 1;
+      this.attempt += 1;
+      const info = { totalAttempt: this.totalAttempt, attempt: this.attempt };
+      await sleep(this.reconnectDelay(info));
+      const websocket = await this.connect(info);
+      const peer = new ClientPeer(async (message) => {
+        const encoded = await encodePeerMessage(message, this.encodePeerMessageOptions);
+        return websocket.send(encoded);
+      });
+      let connectingResolvers;
+      if (websocket.readyState === WEBSOCKET_CONNECTING) {
+        connectingResolvers = promiseWithResolvers();
+        websocket.addEventListener("open", () => {
+          connectingResolvers?.resolve();
+        });
+      }
+      websocket.addEventListener("message", sequential(async (event) => {
+        const message = event.data instanceof Blob ? await loadBytes(event.data) : toStringOrBytes(event.data);
+        const result = decodePeerMessage(message, this.decodePeerMessageOptions);
+        if (result.matched && isServerPeerSendMessage(result.message)) {
+          peer.message(result.message);
+        }
+      }));
+      websocket.addEventListener("close", async (event) => {
+        connectingResolvers?.resolve();
+        if (this.reconnectOnCloseEnabled) {
+          sleep(this.reconnectOnCloseDelay).then(() => this.getConnectedPeer()).catch(() => {
+          });
+        }
+        const reason = new AbortError(`WebSocket closed (code ${event.code}: ${event.reason})`);
+        await peer.close(reason);
+      });
+      await connectingResolvers?.promise;
+      connectingResolvers = void 0;
+      return { websocket, peer };
+    })().catch((error) => {
+      if (!this.reconnectEnabled) {
+        throw error;
+      }
+    });
+    return this.getConnectedPeer();
+  }
+}
+
+class RPCLink extends StandardLink {
+  constructor(options) {
+    const codec = new RPCLinkCodec(options);
+    const transport = new WebSocketLinkTransport(options);
+    super(codec, transport, options);
+  }
+}
+
+export { RPCLink, WebSocketLinkTransport };

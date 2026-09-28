@@ -1,0 +1,37 @@
+import { Context, Router } from '@orpc/server';
+import { FetchHandler, FetchHandlerOptions } from '@orpc/server/fetch';
+import { StandardHandlerOptions } from '@orpc/server/standard';
+import { OpenAPIHandlerCodecOptions } from '../standard/index.js';
+import { ClientContext } from '@orpc/client';
+import { FetchLinkTransportOptions } from '@orpc/client/fetch';
+import { StandardLink, StandardLinkOptions } from '@orpc/client/standard';
+import { RouterContract } from '@orpc/contract';
+import { OpenAPILinkCodecOptions } from '../standard/index.js';
+import '@orpc/shared';
+import '@standard-server/core';
+import '../../shared/openapi.Dl3gew1x.js';
+
+interface OpenAPIHandlerOptions<T extends Context> extends FetchHandlerOptions<T>, StandardHandlerOptions<T>, OpenAPIHandlerCodecOptions<T> {
+}
+/**
+ * Serves oRPC procedures over the OpenAPI (RESTful) protocol using the Fetch API `Request`/`Response`.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/fetch-api | Fetch API Adapter}
+ */
+declare class OpenAPIHandler<T extends Context> extends FetchHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<OpenAPIHandlerOptions<T>>);
+}
+
+interface OpenAPILinkOptions<T extends ClientContext> extends StandardLinkOptions<T>, FetchLinkTransportOptions<T>, OpenAPILinkCodecOptions<T> {
+}
+/**
+ * Client link that calls an OpenAPI (RESTful) oRPC server over HTTP using the Fetch API.
+ *
+ * @see {@link https://orpc.dev/docs/openapi/link | OpenAPI Link}
+ */
+declare class OpenAPILink<T extends ClientContext> extends StandardLink<T> {
+    constructor(router: RouterContract, options?: OpenAPILinkOptions<T>);
+}
+
+export { OpenAPIHandler, OpenAPILink };
+export type { OpenAPIHandlerOptions, OpenAPILinkOptions };

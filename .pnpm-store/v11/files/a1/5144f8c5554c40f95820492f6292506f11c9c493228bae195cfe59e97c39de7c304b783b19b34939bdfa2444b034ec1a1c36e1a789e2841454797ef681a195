@@ -1,0 +1,409 @@
+import { Value, Promisable, ThrowableError } from '@orpc/shared';
+import { StandardLazyRequest, StandardHeaders, StandardMethod } from '@standard-server/core';
+import { Context } from '../index.js';
+import { StandardHandlerPlugin, StandardHandlerRoutingInterceptorOptions, StandardHandlerOptions, StandardHandlerInterceptorOptions } from '../adapters/standard/index.js';
+export { R as RequestLimitHandlerPlugin, a as RequestLimitHandlerPluginOptions } from '../shared/server.D0dr-F8u.js';
+import '@orpc/client';
+import '@orpc/contract';
+
+/**
+ * Content type for batch responses that use the length-prefixed binary framing
+ * (streaming mode, and buffered mode when any sub-response contains binary).
+ *
+ * Decoding is driven by the `standard-server` body hint, not this header,
+ * so it only serves to describe the payload to logs, proxies, and dev tools.
+ */
+declare const BATCH_CONTENT_TYPE = "application/vnd.orpc.batch";
+interface BatchHandlerPluginOptions<T extends Context> {
+    /**
+     * The max size of the batch allowed.
+     *
+     * @default 10
+     */
+    maxSize?: Value<Promisable<number>, [options: StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * Map each subrequest in the batch before it is processed.
+     *
+     * @default merges the batch request headers into the subrequest, giving them priority over
+     * the subrequest headers, and removes the `orpc-batch` header to prevent nested batching
+     */
+    mapSubrequest?: (subrequest: StandardLazyRequest, batchOptions: StandardHandlerRoutingInterceptorOptions<T>) => StandardLazyRequest;
+    /**
+     * Success batch response status code.
+     *
+     * @default 207
+     */
+    successStatus?: Value<Promisable<number>, [batchOptions: StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * Success batch response headers.
+     *
+     * @default {}
+     */
+    headers?: Value<Promisable<StandardHeaders>, [batchOptions: StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * Keep-alive settings for streaming batch responses.
+     *
+     * When enabled, a zero-length length-prefixed frame is sent periodically while the
+     * stream is idle (no message sent for `interval` ms). Clients ignore these frames.
+     * Only applies to streaming mode.
+     *
+     * @default { enabled: true, interval: 15000 }
+     */
+    keepAlive?: undefined | {
+        /**
+         * If true, a keep-alive frame is sent periodically while the stream is idle.
+         *
+         * @default true
+         */
+        enabled: boolean;
+        /**
+         * Interval (in milliseconds) between keep-alive frames after the last message.
+         *
+         * @default 15000
+         */
+        interval?: number;
+    };
+}
+/**
+ * Handles batch requests sent by the client Batch Link Plugin, splitting each
+ * batch into sub-requests and streaming their responses back together.
+ *
+ * @remarks
+ * **Note**: HTTP/2 and later already multiplex requests over a single connection, which often makes this plugin unnecessary.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/batch | Batch Plugin}
+ */
+declare class BatchHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    /**
+     * Run batch interceptors inside the tracing interceptors
+     * so each subrequest gets its own span instead of sharing one batch-level span.
+     */
+    after: string[];
+    private readonly maxSize;
+    private readonly mapSubrequest;
+    private readonly successStatus;
+    private readonly headers;
+    private readonly keepAliveEnabled;
+    private readonly keepAliveInterval;
+    constructor(options?: BatchHandlerPluginOptions<T>);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+interface CORSHandlerPluginOptions<T extends Context> {
+    /**
+     * Configures the `Access-Control-Allow-Origin` header.
+     * Can be a string, an array of allowed origins, or a function (optionally async) that returns the allowed origin(s).
+     *
+     * @default '*'
+     */
+    origin?: Value<Promisable<string | readonly string[] | null | undefined>, [origin: string, options: StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * Configures the `Timing-Allow-Origin` header.
+     * Can be a string, an array of allowed origins, or a function (optionally async) that returns the allowed origin(s).
+     */
+    timingOrigin?: Value<Promisable<string | readonly string[] | null | undefined>, [origin: string, options: StandardHandlerRoutingInterceptorOptions<T>]>;
+    /**
+     * Configures the `Access-Control-Allow-Methods` header for preflight requests.
+     *
+     * @default ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'PATCH', 'QUERY']
+     */
+    allowMethods?: readonly string[];
+    /**
+     * Configures the `Access-Control-Allow-Headers` header for preflight requests.
+     * Falls back to the request's `Access-Control-Request-Headers` if not set.
+     */
+    allowHeaders?: readonly string[];
+    /**
+     * Configures the `Access-Control-Max-Age` header (in seconds) for preflight requests.
+     */
+    maxAge?: number;
+    /**
+     * Configures the `Access-Control-Allow-Credentials` header.
+     */
+    credentials?: boolean;
+    /**
+     * Configures the `Access-Control-Expose-Headers` header.
+     */
+    exposeHeaders?: readonly string[];
+}
+/**
+ * Configures the [CORS Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)
+ * for your API, including preflight requests.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/cors | CORS Handler Plugin}
+ */
+declare class CORSHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    private readonly options;
+    name: string;
+    /**
+     * - Do not create spans for CORS preflight requests.
+     * - Run CORS interceptors before batch interceptors so headers are applied to
+     *  the actual response rather than sub-responses.
+     */
+    after: string[];
+    constructor(options?: CORSHandlerPluginOptions<T>);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+    private resolveOrigin;
+}
+
+/**
+ * Adds Cross-Site Request Forgery (CSRF) protection that makes the safe `GET` method as
+ * secure as unsafe ones such as `POST`. It rejects `GET` requests arriving as top-level
+ * navigations initiated cross-site or from outside the browser, the only context where
+ * another site can make a browser attach `SameSite=Lax` cookies to a safe-method request.
+ * Requests matching no procedure stay unmatched, so they can fall through to whatever
+ * serves the rest of the site.
+ *
+ * @remarks
+ * **Note**: Requests browsers send without `SameSite=Lax` cookies, such as cross-site `fetch`
+ * and `<img>`, pass through, so procedures stay reachable from other sites. This safeguard
+ * requires authentication cookies explicitly marked `SameSite=Lax` or `SameSite=Strict`,
+ * since browsers may attach other cookies to the requests that pass.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/get-method-csrf-protection | GET Method CSRF Protection Plugin}
+ */
+declare class GetMethodCsrfProtectionHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+    private isAllowed;
+}
+
+interface MethodOverrideHandlerPluginOptions {
+    /**
+     * The query parameter carrying the override method.
+     *
+     * @default 'method'
+     */
+    param?: string;
+    /**
+     * The methods a POST request may be overridden to.
+     *
+     * GET and HEAD are excluded by default because they switch input decoding
+     * from the request body to the query string and widen the CSRF surface.
+     *
+     * @default ['PUT', 'PATCH', 'DELETE']
+     */
+    methods?: readonly StandardMethod[];
+}
+/**
+ * Overrides the HTTP method of a POST request based on a query parameter,
+ * so HTML forms (which only support GET and POST) can invoke procedures
+ * routed as PUT, PATCH, or DELETE.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/method-override | Method Override Plugin}
+ */
+declare class MethodOverrideHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    /**
+     * Should override batch sub-request methods, not the original batch request.
+     */
+    before: string[];
+    private readonly param;
+    private readonly methods;
+    constructor(options?: MethodOverrideHandlerPluginOptions);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+/**
+ * Rejects requests whose decoded input contains prototype-polluting keys: an own
+ * `__proto__` key, or an own `constructor` key holding a `prototype` key. oRPC's own
+ * decoding never assigns through the prototype chain, so this plugin exists to stop such
+ * keys from reaching application code that merges, clones, or path-sets input with a
+ * library vulnerable to prototype pollution. An `AsyncIteratorObject` input is checked
+ * value by value as it arrives, and a polluting value fails that iteration instead.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/prototype-pollution-protection | Prototype Pollution Protection Plugin}
+ */
+declare class PrototypePollutionProtectionHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+    private rejectPollutingInput;
+    /**
+     * Walks the containers the built-in codecs can produce: arrays, maps, sets, and plain
+     * objects, including null-prototype ones. Other objects, such as files and dates, carry
+     * no attacker-authored keys and are left alone. The walk is iterative, so input nested
+     * deeper than the call stack allows still gets the intended verdict instead of a
+     * `RangeError`.
+     */
+    private containsPollutingKey;
+}
+
+/**
+ * Decompresses incoming request bodies based on the Content-Encoding header,
+ * supporting gzip, deflate, and deflate-raw.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/request-compression | Request Compression Plugin}
+ */
+declare class RequestCompressionHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    /**
+     * Should decompress the original batch request body instead of sub-requests.
+     */
+    after: string[];
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+/**
+ * The context shape into which the Request Headers Plugin injects `reqHeaders`.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/request-headers | Request Headers Plugin}
+ */
+interface RequestHeadersHandlerPluginContext {
+    /**
+     * Request headers as a Headers instance. This is injected by the Request Headers Plugin.
+     */
+    reqHeaders?: Headers | undefined;
+}
+/**
+ * The Request Headers Plugin injects a `reqHeaders` instance into the context,
+ * allowing access to request headers in oRPC.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/request-headers | Request Headers Plugin}
+ */
+declare class RequestHeadersHandlerPlugin<T extends RequestHeadersHandlerPluginContext> implements StandardHandlerPlugin<T> {
+    name: string;
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+interface ResponseCompressionHandlerPluginOptions<T extends Context> {
+    /**
+     * The compression schemes to use for response compression.
+     * Schemes are prioritized by their order in this array and
+     * only applied if the client supports them (via Accept-Encoding).
+     *
+     * @default ['gzip', 'deflate']
+     */
+    encodings?: readonly ('gzip' | 'deflate' | 'deflate-raw')[];
+    /**
+     * The minimum response size in bytes required to trigger compression.
+     * Responses smaller than this threshold will not be compressed to avoid overhead.
+     * If the response size cannot be determined, compression will still be applied.
+     *
+     * @default 1024 (1KB)
+     */
+    threshold?: number;
+    /**
+     * Determines whether a response with the given Content-Type should be compressed.
+     * Only consulted for binary transfers (streams, files, and file form-data parts).
+     * Also receives the routing interceptor options for per-request decisions.
+     *
+     * @default isCompressibleContentType (covers common text-based formats)
+     */
+    isCompressibleContentType?: (contentType: string | null | undefined, options: StandardHandlerRoutingInterceptorOptions<T>) => boolean;
+}
+/**
+ * Compresses response bodies based on the client's Accept-Encoding header.
+ * Works at the standard handler level, so it supports all adapters.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/response-compression | Response Compression Plugin}
+ */
+declare class ResponseCompressionHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    /**
+     * Compression should be done after batching, to compress the final response.
+     * Compression should also be done after response headers are set, to access final headers like Content-Type and Cache-Control.
+     */
+    after: string[];
+    private readonly encodings;
+    private readonly threshold;
+    private readonly isCompressibleContentType;
+    constructor(options?: ResponseCompressionHandlerPluginOptions<T>);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+/**
+ * The context shape into which the Response Headers Plugin injects `resHeaders`.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/response-headers | Response Headers Plugin}
+ */
+interface ResponseHeadersHandlerPluginContext {
+    /**
+     * Response headers as a Headers instance. This is injected by the Response Headers Plugin.
+     * When set before the response is sent, these headers will be included in the response. If not set, no additional headers will be added.
+     */
+    resHeaders?: Headers | undefined;
+}
+/**
+ * The Response Headers Plugin allows you to set response headers in oRPC.
+ * It injects a resHeaders instance into the context, enabling you to modify response headers easily.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/response-headers | Response Headers Plugin}
+ */
+declare class ResponseHeadersHandlerPlugin<T extends ResponseHeadersHandlerPluginContext> implements StandardHandlerPlugin<T> {
+    name: string;
+    /**
+     * Interceptors should run after batch interceptors so headers are applied to each sub-response.
+     */
+    before: string[];
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+interface RethrowHandlerPluginOptions<T extends Context> {
+    /**
+     * Decide which errors should be rethrown.
+     *
+     * @example
+     * ```ts
+     * const rethrowPlugin = new RethrowHandlerPlugin({
+     *   filter: (error) => {
+     *     // Rethrow all non-ORPCError errors
+     *     return !(error instanceof ORPCError)
+     *   }
+     * })
+     * ```
+     */
+    filter: (error: ThrowableError, options: StandardHandlerInterceptorOptions<T>) => boolean;
+}
+/**
+ * The plugin can bypass oRPC's built-in error handling
+ * and rethrow matching errors directly to your framework's error handling mechanism
+ * (e.g., NestJS exception filters, Express error middleware).
+ *
+ * @see {@link https://orpc.dev/docs/plugins/rethrow | Rethrow Handler Plugin}
+ */
+declare class RethrowHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    name: string;
+    private readonly filter;
+    private readonly CONTEXT_SYMBOL;
+    constructor(options: RethrowHandlerPluginOptions<T>);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+interface TimeoutHandlerPluginOptions<T extends Context> {
+    /**
+     * Timeout in milliseconds before the request signal is aborted.
+     * This only covers producing the response, use `streamingTimeout`
+     * to limit streaming response bodies.
+     * Use `null` or `undefined` to disable the timeout.
+     */
+    timeout: Value<number | null | undefined, [options: StandardHandlerInterceptorOptions<T>]>;
+    /**
+     * Timeout in milliseconds for the full duration of a streaming response body
+     * (async iterator object or readable stream), measured from when the response is produced.
+     * When exceeded, the request signal is aborted and the body ends
+     * once its producer honors the signal.
+     * Usually higher than `timeout`.
+     * Use `null` or `undefined` to disable the timeout.
+     *
+     * @default undefined (streaming responses run without limit)
+     */
+    streamingTimeout?: Value<number | null | undefined, [options: StandardHandlerInterceptorOptions<T>]>;
+}
+/**
+ * The Timeout Handler Plugin aborts the request signal with an `AbortError`
+ * when handling exceeds a configured timeout. It only aborts the signal,
+ * the procedure must honor it to stop early and produce the response.
+ *
+ * @see {@link https://orpc.dev/docs/plugins/timeout | Timeout Plugin}
+ */
+declare class TimeoutHandlerPlugin<T extends Context> implements StandardHandlerPlugin<T> {
+    private readonly timeout;
+    private readonly streamingTimeout;
+    name: string;
+    constructor(options: NoInfer<TimeoutHandlerPluginOptions<T>>);
+    init(options: StandardHandlerOptions<T>): StandardHandlerOptions<T>;
+}
+
+export { BATCH_CONTENT_TYPE, BatchHandlerPlugin, CORSHandlerPlugin, CORSHandlerPlugin as CORSPlugin, GetMethodCsrfProtectionHandlerPlugin, MethodOverrideHandlerPlugin, PrototypePollutionProtectionHandlerPlugin, RequestCompressionHandlerPlugin, RequestHeadersHandlerPlugin, RequestHeadersHandlerPlugin as RequestHeadersPlugin, ResponseCompressionHandlerPlugin, ResponseHeadersHandlerPlugin, ResponseHeadersHandlerPlugin as ResponseHeadersPlugin, RethrowHandlerPlugin, TimeoutHandlerPlugin };
+export type { BatchHandlerPluginOptions, CORSHandlerPluginOptions, MethodOverrideHandlerPluginOptions, RequestHeadersHandlerPluginContext, RequestHeadersHandlerPluginContext as RequestHeadersPluginContext, ResponseCompressionHandlerPluginOptions, ResponseHeadersHandlerPluginContext, ResponseHeadersHandlerPluginContext as ResponseHeadersPluginContext, RethrowHandlerPluginOptions, TimeoutHandlerPluginOptions };

@@ -1,0 +1,378 @@
+import { isTypescriptObject, getOrBind, safeEncodeURIComponent, safeDecodeURIComponent, toArray } from '@standard-server/shared';
+
+class EventStreamEncoderError extends TypeError {
+}
+class EventStreamDecoderError extends TypeError {
+}
+class ErrorEvent extends Error {
+  constructor(data, options = {}) {
+    super(options?.message ?? "Error Event", options);
+    this.data = data;
+  }
+}
+
+const LINE_ENDING_REGEX = /\r\n|\r(?!\n)|\n/;
+const MESSAGE_DELIMITER_REGEX = /(?:\r\n|\r(?!\n)|\n){2}/;
+const MESSAGE_DELIMITER_GLOBAL_REGEX = /(?:\r\n|\r(?!\n)|\n){2}/g;
+const CR = 13;
+const LF = 10;
+const SPACE = 32;
+function decodeEventStreamMessage(encoded) {
+  const message = {};
+  for (const line of encoded.split(LINE_ENDING_REGEX)) {
+    if (line === "") {
+      continue;
+    }
+    const index = line.indexOf(":");
+    const value = index === -1 ? "" : line.slice(line.charCodeAt(index + 1) === SPACE ? index + 2 : index + 1);
+    if (index === 0) {
+      (message.comments ??= []).push(value);
+      continue;
+    }
+    switch (index === -1 ? line : line.slice(0, index)) {
+      case "data":
+        message.data = message.data === void 0 ? value : `${message.data}
+${value}`;
+        break;
+      case "event":
+        message.event = value;
+        break;
+      case "id":
+        message.id = value;
+        break;
+      case "retry": {
+        const maybeInteger = Number.parseInt(value, 10);
+        if (maybeInteger >= 0 && maybeInteger.toString() === value) {
+          message.retry = maybeInteger;
+        }
+        break;
+      }
+    }
+  }
+  return message;
+}
+class EventStreamDecoder {
+  constructor(onEvent) {
+    this.onEvent = onEvent;
+  }
+  pending = [];
+  // Last up-to-3 characters of the pending buffer, prefixed to the next chunk
+  // so a delimiter straddling the boundary is still found.
+  tail = "";
+  // Set when a chunk-ending '\r' was already consumed as a line ending, so a
+  // leading '\n' in the next chunk is the second half of that CRLF pair.
+  discardLeadingLF = false;
+  feed(chunk) {
+    if (chunk === "") {
+      return;
+    }
+    if (this.discardLeadingLF) {
+      this.discardLeadingLF = false;
+      if (chunk.charCodeAt(0) === LF) {
+        chunk = chunk.slice(1);
+        if (chunk === "") {
+          return;
+        }
+      }
+    }
+    const scan = this.tail + chunk;
+    if (!MESSAGE_DELIMITER_REGEX.test(scan)) {
+      this.pending.push(chunk);
+      this.tail = scan.slice(-3);
+      return;
+    }
+    this.pending.push(chunk);
+    const buffered = this.pending.length === 1 ? chunk : this.pending.join("");
+    const offset = buffered.length - scan.length;
+    const parts = [];
+    let start = 0;
+    for (const match of scan.matchAll(MESSAGE_DELIMITER_GLOBAL_REGEX)) {
+      parts.push(buffered.slice(start, offset + match.index));
+      start = offset + match.index + match[0].length;
+    }
+    const incomplete = buffered.slice(start);
+    this.pending.length = 0;
+    this.tail = incomplete.slice(-3);
+    if (incomplete === "") {
+      this.discardLeadingLF = chunk.charCodeAt(chunk.length - 1) === CR;
+    } else {
+      this.pending.push(incomplete);
+    }
+    for (const encoded of parts) {
+      this.onEvent(decodeEventStreamMessage(encoded));
+    }
+  }
+  end() {
+    if (this.pending.length !== 0) {
+      throw new EventStreamDecoderError("Event Stream ended before complete");
+    }
+  }
+}
+class EventStreamDecoderStream {
+  readable;
+  writable;
+  constructor() {
+    let decoder;
+    const transform = new TransformStream({
+      start(controller) {
+        decoder = new EventStreamDecoder((event) => {
+          controller.enqueue(event);
+        });
+      },
+      transform(chunk) {
+        decoder.feed(chunk);
+      },
+      flush() {
+        decoder.end();
+      }
+    });
+    this.readable = transform.readable;
+    this.writable = transform.writable;
+  }
+}
+
+const EVENT_STREAM_LINE_ENDING_REGEX = /\r\n|[\n\r]/;
+const EVENT_STREAM_LINE_ENDING_GLOBAL_REGEX = /\r\n|[\n\r]/g;
+function containsEventStreamLineBreak(value) {
+  return EVENT_STREAM_LINE_ENDING_REGEX.test(value);
+}
+function assertEventStreamMessageId(id) {
+  if (containsEventStreamLineBreak(id)) {
+    throw new EventStreamEncoderError("Event's id must not contain a carriage return or newline character");
+  }
+}
+function assertEventStreamMessageName(event) {
+  if (containsEventStreamLineBreak(event)) {
+    throw new EventStreamEncoderError("Event's event must not contain a carriage return or newline character");
+  }
+}
+function assertEventStreamMessageRetry(retry) {
+  if (!Number.isInteger(retry) || retry < 0) {
+    throw new EventStreamEncoderError("Event's retry must be a integer and >= 0");
+  }
+}
+function assertEventStreamMessageComment(comment) {
+  if (containsEventStreamLineBreak(comment)) {
+    throw new EventStreamEncoderError("Event's comment must not contain a carriage return or newline character");
+  }
+}
+function encodeEventStreamMessageData(data) {
+  if (data === void 0) {
+    return "";
+  }
+  return `data: ${data.replace(EVENT_STREAM_LINE_ENDING_GLOBAL_REGEX, "\ndata: ")}
+`;
+}
+function encodeEventStreamMessageComments(comments) {
+  let output = "";
+  for (const comment of comments ?? []) {
+    assertEventStreamMessageComment(comment);
+    output += `: ${comment}
+`;
+  }
+  return output;
+}
+function encodeEventStreamMessage(message) {
+  let output = "";
+  output += encodeEventStreamMessageComments(message.comments);
+  if (message.event !== void 0) {
+    assertEventStreamMessageName(message.event);
+    output += `event: ${message.event}
+`;
+  }
+  if (message.retry !== void 0) {
+    assertEventStreamMessageRetry(message.retry);
+    output += `retry: ${message.retry}
+`;
+  }
+  if (message.id !== void 0) {
+    assertEventStreamMessageId(message.id);
+    output += `id: ${message.id}
+`;
+  }
+  output += encodeEventStreamMessageData(message.data);
+  output += "\n";
+  return output;
+}
+
+const EVENT_META_SYMBOL = Symbol.for("STANDARD_SERVER_EVENT_META");
+const EVENT_SOURCE_SYMBOL = Symbol.for("STANDARD_SERVER_EVENT_SOURCE");
+function withEventMeta(container, meta) {
+  let assertedMeta;
+  if (meta.id !== void 0) {
+    assertEventStreamMessageId(meta.id);
+    assertedMeta ??= {};
+    assertedMeta.id = meta.id;
+  }
+  if (meta.retry !== void 0) {
+    assertEventStreamMessageRetry(meta.retry);
+    assertedMeta ??= {};
+    assertedMeta.retry = meta.retry;
+  }
+  if (meta.comments !== void 0) {
+    for (const comment of meta.comments) {
+      assertEventStreamMessageComment(comment);
+    }
+    assertedMeta ??= {};
+    assertedMeta.comments = meta.comments;
+  }
+  if (!assertedMeta) {
+    return container;
+  }
+  return new Proxy(container, {
+    get(target, prop, _receiver) {
+      if (prop === EVENT_SOURCE_SYMBOL) {
+        return target;
+      }
+      if (prop === EVENT_META_SYMBOL) {
+        return assertedMeta;
+      }
+      return getOrBind(target, prop);
+    }
+  });
+}
+function unwrapEvent(container) {
+  if (!isTypescriptObject(container)) {
+    return [container, void 0];
+  }
+  const meta = container[EVENT_META_SYMBOL];
+  const target = container[EVENT_SOURCE_SYMBOL] ?? container;
+  return [target, meta];
+}
+function getEventMeta(container) {
+  if (!isTypescriptObject(container)) {
+    return void 0;
+  }
+  return container[EVENT_META_SYMBOL];
+}
+
+function generateContentDisposition(filename, type = "inline") {
+  const encodedFilename = filename.replace(/[^\x20-\x7E]/g, "_").replace(/[\\"]/g, "\\$&");
+  const encodedFilenameStar = safeEncodeURIComponent(filename).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`).replace(/%(7C|60|5E)/g, (str, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+  return `${type}; filename="${encodedFilename}"; filename*=utf-8''${encodedFilenameStar}`;
+}
+function getFilenameFromContentDisposition(contentDisposition) {
+  const extValue = contentDisposition.match(/(?:^|;)\s*filename\*=([^;]*)/i)?.[1]?.trim();
+  const extValueMatch = extValue?.match(/^([^']*)'[^']*'(.*)$/);
+  if (extValueMatch) {
+    const [, charset = "", encodedFilename = ""] = extValueMatch;
+    if (/^(?:utf-8|us-ascii)$/i.test(charset)) {
+      return safeDecodeURIComponent(encodedFilename);
+    }
+  } else if (extValue) {
+    return safeDecodeURIComponent(extValue);
+  }
+  const filenameMatch = contentDisposition.match(/(?:^|;)\s*filename=(?:"((?:\\.|[^"\\])*)"|([^";]*))/i);
+  if (filenameMatch?.[1] !== void 0) {
+    return filenameMatch[1].replace(/\\(.)/g, "$1");
+  }
+  return filenameMatch?.[2]?.trim() || void 0;
+}
+function flattenStandardHeader(header) {
+  if (typeof header === "string" || header === void 0) {
+    return header;
+  }
+  if (header.length === 0) {
+    return void 0;
+  }
+  return header.join(", ");
+}
+const STANDARD_BODY_HINT_SET = /* @__PURE__ */ new Set([
+  "json",
+  "form-data",
+  "url-search-params",
+  "event-stream",
+  "octet-stream",
+  "file",
+  "none"
+]);
+function resolveStandardBodyHint(headers) {
+  const hint = flattenStandardHeader(headers["standard-server"]);
+  if (hint !== void 0 && STANDARD_BODY_HINT_SET.has(hint)) {
+    return hint;
+  }
+  const mimeType = flattenStandardHeader(headers["content-type"])?.split(";")[0]?.trim().toLowerCase();
+  const contentLength = flattenStandardHeader(headers["content-length"]);
+  const contentDisposition = flattenStandardHeader(headers["content-disposition"]);
+  const fileName = contentDisposition !== void 0 ? getFilenameFromContentDisposition(contentDisposition) : void 0;
+  if (mimeType === void 0 && (contentLength === void 0 || contentLength === "0")) {
+    return "none";
+  }
+  if (mimeType === "application/json") {
+    return "json";
+  }
+  if (mimeType === "multipart/form-data") {
+    return "form-data";
+  }
+  if (mimeType === "application/x-www-form-urlencoded") {
+    return "url-search-params";
+  }
+  if (mimeType === "text/event-stream") {
+    return "event-stream";
+  }
+  if (fileName !== void 0 || contentLength !== void 0) {
+    return "file";
+  }
+  return "octet-stream";
+}
+function mergeStandardHeaders(a, b) {
+  const merged = { ...a, ...b };
+  for (const key of Object.keys(b)) {
+    if (!Object.hasOwn(a, key)) {
+      continue;
+    }
+    const aValue = a[key];
+    const bValue = b[key];
+    merged[key] = aValue === void 0 || bValue === void 0 ? aValue ?? bValue : [...toArray(aValue), ...toArray(bValue)];
+  }
+  return merged;
+}
+function parseStandardUrl(url) {
+  const hashStart = url.indexOf("#");
+  const searchStart = url.indexOf("?");
+  const hasSearchBeforeHash = searchStart !== -1 && (hashStart === -1 || searchStart < hashStart);
+  const pathnameEnd = hasSearchBeforeHash ? searchStart : hashStart !== -1 ? hashStart : url.length;
+  const searchEnd = hashStart !== -1 ? hashStart : url.length;
+  const pathname = url.slice(0, pathnameEnd);
+  const search = hasSearchBeforeHash ? url.slice(searchStart, searchEnd) : void 0;
+  const hash = hashStart !== -1 ? url.slice(hashStart) : void 0;
+  return [pathname, search, hash];
+}
+
+function isStandardMethod(maybe) {
+  return typeof maybe === "string";
+}
+function isStandardUrl(maybe) {
+  return typeof maybe === "string" && maybe.startsWith("/");
+}
+function isStandardHeaders(maybe) {
+  if (!isTypescriptObject(maybe)) {
+    return false;
+  }
+  return Object.values(maybe).every(
+    (value) => value === void 0 || typeof value === "string" || Array.isArray(value) && value.every((v) => typeof v === "string")
+  );
+}
+function isStandardStatus(maybe) {
+  return Number.isInteger(maybe);
+}
+function isStandardRequest(maybe) {
+  if (!isTypescriptObject(maybe)) {
+    return false;
+  }
+  if (maybe.signal !== void 0 && !(maybe.signal instanceof AbortSignal)) {
+    return false;
+  }
+  return isStandardMethod(maybe.method) && isStandardUrl(maybe.url) && isStandardHeaders(maybe.headers);
+}
+function isStandardResponse(maybe) {
+  if (!isTypescriptObject(maybe)) {
+    return false;
+  }
+  if (!isStandardStatus(maybe.status)) {
+    return false;
+  }
+  return isStandardHeaders(maybe.headers);
+}
+
+export { ErrorEvent, EventStreamDecoder, EventStreamDecoderError, EventStreamDecoderStream, EventStreamEncoderError, assertEventStreamMessageComment, assertEventStreamMessageId, assertEventStreamMessageName, assertEventStreamMessageRetry, decodeEventStreamMessage, encodeEventStreamMessage, encodeEventStreamMessageComments, encodeEventStreamMessageData, flattenStandardHeader, generateContentDisposition, getEventMeta, getFilenameFromContentDisposition, isStandardHeaders, isStandardMethod, isStandardRequest, isStandardResponse, isStandardStatus, isStandardUrl, mergeStandardHeaders, parseStandardUrl, resolveStandardBodyHint, unwrapEvent, withEventMeta };

@@ -1,0 +1,96 @@
+import { resolveMaybeOptionalOptions, getConstructors } from '@orpc/shared';
+
+const COMMON_ERROR_STATUS_MAP = {
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  PAYMENT_REQUIRED: 402,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  METHOD_NOT_SUPPORTED: 405,
+  NOT_ACCEPTABLE: 406,
+  TIMEOUT: 408,
+  CONFLICT: 409,
+  GONE: 410,
+  PRECONDITION_FAILED: 412,
+  PAYLOAD_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
+  UNPROCESSABLE_CONTENT: 422,
+  PRECONDITION_REQUIRED: 428,
+  TOO_MANY_REQUESTS: 429,
+  CLIENT_CLOSED_REQUEST: 499,
+  INTERNAL_SERVER_ERROR: 500,
+  NOT_IMPLEMENTED: 501,
+  BAD_GATEWAY: 502,
+  SERVICE_UNAVAILABLE: 503,
+  GATEWAY_TIMEOUT: 504
+};
+let ORPCErrorConstructors;
+class ORPCError extends Error {
+  static {
+    const ORPC_ERROR_CONSTRUCTORS_SYMBOL = Symbol.for("ORPC_ERROR_CONSTRUCTORS");
+    void (globalThis[ORPC_ERROR_CONSTRUCTORS_SYMBOL] ??= /* @__PURE__ */ new WeakSet());
+    ORPCErrorConstructors = globalThis[ORPC_ERROR_CONSTRUCTORS_SYMBOL];
+    ORPCErrorConstructors.add(ORPCError);
+  }
+  /**
+   * @remarks
+   * **Note**: The `__branch` property is used for type branding, helping TypeScript distinguish
+   * an `ORPCError` instance from plain objects with a similar structure.
+   */
+  name = "ORPCError";
+  /**
+   * Indicates whether the error matches a definition in the procedure's `.errors` map,
+   * which makes its type inferable on the client.
+   */
+  defined = false;
+  code;
+  data;
+  constructor(code, ...rest) {
+    const options = resolveMaybeOptionalOptions(rest);
+    const message = options.message ?? code.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+    super(message, options);
+    this.code = code;
+    this.data = options.data;
+  }
+  toJSON() {
+    return {
+      defined: this.defined,
+      code: this.code,
+      message: this.message,
+      data: this.data
+    };
+  }
+  /**
+   * Workaround for Next.js where different contexts use separate
+   * dependency graphs, causing multiple ORPCError constructors existing and breaking
+   * `instanceof` checks across contexts.
+   *
+   * This is particularly problematic with "Optimized SSR", where orpc-client
+   * executes in one context but is invoked from another. When an error is thrown
+   * in the execution context, `instanceof ORPCError` checks fail in the
+   * invocation context due to separate class constructors.
+   *
+   * @todo Remove this and related code if Next.js resolves the multiple dependency graph issue.
+   */
+  static [Symbol.hasInstance](instance) {
+    if (!ORPCErrorConstructors.has(this)) {
+      return super[Symbol.hasInstance](instance);
+    }
+    for (const constructor of getConstructors(instance)) {
+      if (ORPCErrorConstructors.has(constructor)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+class MalformedResponseError extends Error {
+  name = "MalformedResponseError";
+  response;
+  constructor(options) {
+    super(options.message, options);
+    this.response = options.response;
+  }
+}
+
+export { COMMON_ERROR_STATUS_MAP as C, MalformedResponseError as M, ORPCError as O };

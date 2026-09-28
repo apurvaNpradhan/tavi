@@ -1,0 +1,55 @@
+name: "Feature request"
+description: Suggest a capability the template should have
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tavi is a starting point rather than a product, so the most useful
+        requests describe a gap the template *structurally* leaves open — a
+        missing building block — instead of one application's feature.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problem"
+      description: "What can you not do today, and what does that cost you?"
+      placeholder: "Example: there is no way to ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Proposed solution"
+      description: "What you would like to exist. A sketch is fine."
+    validations:
+      required: true
+
+  - type: textarea
+    id: altsolution
+    attributes:
+      label: "Alternatives considered"
+      description: "Other approaches, including working around it today."
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: "Why this belongs in the template"
+      description: |
+        README's "Deliberate deviations from Kaneo" section lists what is
+        intentionally left out (Redis, billing, marketing and docs sites,
+        the MCP server, the Helm chart, marketplace integrations). If this
+        request is close to one of those, explain what makes it a building
+        block rather than a product surface.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context"
+      description: "Links, prior art, or prior implementations."

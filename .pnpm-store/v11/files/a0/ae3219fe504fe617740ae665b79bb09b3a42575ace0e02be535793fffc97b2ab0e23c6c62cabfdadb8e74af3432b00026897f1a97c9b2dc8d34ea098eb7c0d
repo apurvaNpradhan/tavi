@@ -1,0 +1,49 @@
+import { mergeHttpPath } from '@orpc/shared';
+
+const openapi = (incoming) => ({
+  name: "~openapi",
+  init(meta) {
+    const existing = meta["~openapi"];
+    const tags = existing?.tags && incoming.tags ? [...existing.tags, ...incoming.tags] : "tags" in incoming ? incoming.tags : existing?.tags;
+    const queryStyles = existing?.queryStyles && incoming.queryStyles ? { ...existing.queryStyles, ...incoming.queryStyles } : "queryStyles" in incoming ? incoming.queryStyles : existing?.queryStyles;
+    const paramsStyles = existing?.paramsStyles && incoming.paramsStyles ? { ...existing.paramsStyles, ...incoming.paramsStyles } : "paramsStyles" in incoming ? incoming.paramsStyles : existing?.paramsStyles;
+    const existingSpec = existing?.spec;
+    const incomingSpec = incoming.spec;
+    const spec = typeof existingSpec === "function" && typeof incomingSpec === "function" ? (current) => incomingSpec(existingSpec(current)) : typeof existingSpec === "function" && typeof incomingSpec === "object" ? existingSpec(incomingSpec) : typeof existingSpec === "object" && typeof incomingSpec === "function" ? incomingSpec(existingSpec) : "spec" in incoming ? incomingSpec : existingSpec;
+    const prefix = existing?.prefix && incoming.prefix ? mergeHttpPath(existing.prefix, incoming.prefix) : "prefix" in incoming ? incoming.prefix : existing?.prefix;
+    const merged = {
+      ...existing,
+      ...incoming,
+      tags,
+      queryStyles,
+      paramsStyles,
+      spec,
+      prefix
+    };
+    return {
+      ...meta,
+      "~openapi": merged
+    };
+  }
+});
+openapi.method = (method) => ({
+  ...openapi({ method }),
+  name: "~openapi/method"
+});
+openapi.path = (path) => ({
+  ...openapi({ path }),
+  name: "~openapi/path"
+});
+openapi.spec = (spec) => ({
+  ...openapi({ spec }),
+  name: "~openapi/spec"
+});
+openapi.prefix = (prefix) => ({
+  ...openapi({ prefix }),
+  name: "~openapi/prefix"
+});
+function getOpenAPIMeta(procedureOrLazy) {
+  return procedureOrLazy["~orpc"].meta["~openapi"];
+}
+
+export { getOpenAPIMeta as g, openapi as o };

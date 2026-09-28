@@ -1,0 +1,38 @@
+import { defineComponent, h, onMounted, onUnmounted, ref } from "vue";
+//#region src/vue/panel.ts
+function createVuePanel(CoreClass) {
+	const props = {
+		props: { type: Object },
+		devtoolsProps: { type: Object }
+	};
+	return [defineComponent({
+		props,
+		setup(config) {
+			const devToolRef = ref(null);
+			const devtools = ref(null);
+			onMounted(() => {
+				const instance = new CoreClass(config.devtoolsProps);
+				devtools.value = instance;
+				if (devToolRef.value) instance.mount(devToolRef.value, config.props);
+			});
+			onUnmounted(() => {
+				if (devToolRef.value && devtools.value) devtools.value.unmount();
+			});
+			return () => {
+				return h("div", {
+					style: { height: "100%" },
+					ref: devToolRef
+				});
+			};
+		}
+	}), defineComponent({
+		props,
+		setup() {
+			return () => null;
+		}
+	})];
+}
+//#endregion
+export { createVuePanel };
+
+//# sourceMappingURL=panel.js.map

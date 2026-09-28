@@ -1,0 +1,12 @@
+{
+  "name": "@tavi/typescript-config",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "echo 'typescript-config contains only JSON presets; nothing to type-check'"
+  }
+}

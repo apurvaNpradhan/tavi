@@ -1,0 +1,77 @@
+import { Arrayable, MaybeOptionalOptions } from '@orpc/shared';
+import { EncodePeerMessageOptions, DecodePeerMessageOptions } from '@standard-server/peer';
+import { Context } from '../../index.mjs';
+import { StandardHandler, StandardHandlerOptions } from '../standard/index.mjs';
+import { FriendlyStandardHandlerHandleOptions } from '../standard/index.mjs';
+import { Router } from '../../index.mjs';
+import { RPCHandlerCodecOptions } from '../standard/index.mjs';
+import '@orpc/client';
+import '@orpc/contract';
+import '@standard-server/core';
+
+/**
+ * Supports standard WebSocket instances, Bun ServerWebSocket, "ws" ServerWebSocket,
+ * Cloudflare WebSocket Hibernation, and similar implementations.
+ */
+type WebSocketLike = {
+    send: (data: string | Uint8Array<ArrayBuffer>) => unknown;
+};
+interface WebSocketHandlerOptions<_T extends Context> {
+    /**
+     * Options for encoding peer messages. such as `prefix` for distinguishing messages on the same channel..
+     */
+    encodePeerMessage?: EncodePeerMessageOptions | undefined;
+    /**
+     * Options for decoding peer messages. such as `prefix` for distinguishing messages on the same channel..
+     */
+    decodePeerMessage?: DecodePeerMessageOptions | undefined;
+}
+declare class WebSocketHandler<T extends Context> {
+    private readonly handler;
+    private readonly peers;
+    private readonly encodePeerMessageOptions;
+    private readonly decodePeerMessageOptions;
+    constructor(handler: StandardHandler<T>, options?: NoInfer<WebSocketHandlerOptions<T>>);
+    /**
+     * Handles a single WebSocket message.
+     *
+     * Message order matters. Call this immediately after receiving a message,
+     * before any other async work, to preserve ordering.
+     *
+     * To avoid async Blob reads, configure `ws.binaryType` to return binary data
+     * directly (for example, `arraybuffer`).
+     *
+     * @param ws The WebSocket instance. Use the same instance for all messages.
+     * @param data The received message. Binary data should already be loaded (not a `Blob`).
+     */
+    message(ws: WebSocketLike, data: Arrayable<string | ArrayBuffer | Pick<Uint8Array<ArrayBuffer>, 'buffer' | 'byteOffset' | 'byteLength'>>, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): Promise<{
+        matched: boolean;
+    }>;
+    /**
+     * Cleans up peer state for a closed WebSocket.
+     *
+     * @param ws The same WebSocket instance passed to `.message()`.
+     */
+    close(ws: WebSocketLike): Promise<void>;
+    /**
+     * Attaches message and close event listeners to a WebSocket.
+     *
+     * Prefer this over calling `.message()` and `.close()` manually.
+     */
+    upgrade(ws: Pick<WebSocket, 'send' | 'addEventListener' | 'removeEventListener'>, ...rest: MaybeOptionalOptions<FriendlyStandardHandlerHandleOptions<T>>): void;
+}
+
+interface RPCHandlerOptions<T extends Context> extends StandardHandlerOptions<T>, RPCHandlerCodecOptions<T>, WebSocketHandlerOptions<T> {
+}
+/**
+ * Serves an oRPC router over the RPC protocol on a standard WebSocket
+ * connection (Deno, Bun, Cloudflare Durable Objects, and more).
+ *
+ * @see {@link https://orpc.dev/docs/adapters/websocket | WebSocket Adapters}
+ */
+declare class RPCHandler<T extends Context> extends WebSocketHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<RPCHandlerOptions<T>>);
+}
+
+export { RPCHandler, WebSocketHandler };
+export type { RPCHandlerOptions, WebSocketHandlerOptions, WebSocketLike };

@@ -1,0 +1,11 @@
+import { A11yDevtoolsPanel } from "./A11yDevtools.js";
+import { createReactPlugin } from "@tanstack/devtools-utils/react";
+//#region src/react/plugin.ts
+var [a11yDevtoolsPlugin, a11yDevtoolsNoOpPlugin] = createReactPlugin({
+	name: "TanStack A11y",
+	Component: A11yDevtoolsPanel
+});
+//#endregion
+export { a11yDevtoolsNoOpPlugin, a11yDevtoolsPlugin };
+
+//# sourceMappingURL=plugin.js.map

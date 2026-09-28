@@ -1,0 +1,467 @@
+import { mergeErrorMap, resolveMetaPlugins, getHiddenMetaPlugins, ProcedureContract } from '@orpc/contract';
+export { ValidationError, asyncIteratorObject, defineMeta, error, eventIterator, reconcileORPCError, type } from '@orpc/contract';
+import { toArray, bindMethods, isTypescriptObject, resolveMaybeOptionalOptions } from '@orpc/shared';
+export { AsyncIteratorClass, asyncIteratorToStream, asyncIteratorToUnproxiedDataStream, asyncIteratorToStream as eventIteratorToStream, asyncIteratorToUnproxiedDataStream as eventIteratorToUnproxiedDataStream, onAsyncIteratorObjectError, onError, onFinish, onReadableStreamError, onStart, onSuccess, streamToAsyncIteratorObject, streamToAsyncIteratorObject as streamToEventIterator } from '@orpc/shared';
+import { L as Lazy, P as Procedure, c as createProcedureClient } from './shared/server.Djb_ebJT.mjs';
+export { u as unlazy } from './shared/server.Djb_ebJT.mjs';
+import { D as DecoratedProcedure } from './shared/server.24nXyhbl.mjs';
+import { b as augmentRouter, d as augmentImplementedRouter, e as withHiddenRouterContract, f as createGuardedProcedureLazy, g as getRouter } from './shared/server.BynNaBBA.mjs';
+export { a as DEFAULT_ERROR_STATUS, D as DEFAULT_SUCCESS_STATUS, h as call, c as createContractProcedure, i as getHiddenRouterContract, u as unlazyRouter, j as walkProcedureContractsAsync, w as walkProcedureContractsSync } from './shared/server.BynNaBBA.mjs';
+import { RECURSIVE_CLIENT_UNWRAP_KEYS } from '@orpc/client';
+export { COMMON_ERROR_STATUS_MAP, ORPCError, RPCJsonSerializer, RPCSerializer, cloneORPCError, isDefinedError, safe, toORPCError } from '@orpc/client';
+export { ErrorEvent, getEventMeta, unwrapEvent, withEventMeta } from '@standard-server/core';
+
+function decorateMiddleware(middleware) {
+  const decorated = ((...args) => middleware(...args));
+  decorated["~orpc"] = middleware["~orpc"];
+  Object.defineProperty(decorated, "name", {
+    value: middleware.name
+  });
+  decorated.adaptInput = (adapt) => {
+    const mapped = decorateMiddleware(
+      (opts, input, ...args) => {
+        return middleware(opts, adapt(input), ...args);
+      }
+    );
+    mapped["~orpc"] = middleware["~orpc"];
+    Object.defineProperty(mapped, "name", {
+      value: middleware.name
+    });
+    return mapped;
+  };
+  decorated.errors = (errors) => {
+    const newMiddleware = decorateMiddleware(decorated);
+    newMiddleware["~orpc"] = {
+      ...decorated["~orpc"],
+      errorMap: mergeErrorMap(decorated["~orpc"]?.errorMap, errors)
+    };
+    return newMiddleware;
+  };
+  decorated.use = (usedMiddleware) => {
+    const merged = decorateMiddleware((opts, ...args) => {
+      return middleware(
+        {
+          ...opts,
+          async next(nextOpts1) {
+            const result = await usedMiddleware({
+              ...opts,
+              context: { ...opts.context, ...nextOpts1?.context },
+              next(nextOpts2, ...args2) {
+                return opts.next({
+                  ...opts,
+                  context: {
+                    ...nextOpts1?.context,
+                    ...nextOpts2?.context
+                  }
+                }, ...args2);
+              }
+            }, ...args);
+            return {
+              ...result,
+              context: {
+                ...nextOpts1?.context,
+                ...result.context
+              }
+            };
+          }
+        },
+        ...args
+      );
+    });
+    merged["~orpc"] = {
+      ...decorated["~orpc"],
+      errorMap: mergeErrorMap(usedMiddleware["~orpc"]?.errorMap, decorated["~orpc"]?.errorMap),
+      metaPlugins: [
+        ...toArray(middleware["~orpc"]?.metaPlugins),
+        ...toArray(usedMiddleware["~orpc"]?.metaPlugins)
+      ]
+    };
+    Object.defineProperty(merged, "name", {
+      value: `${middleware.name} + ${usedMiddleware.name}`
+    });
+    return merged;
+  };
+  return decorated;
+}
+
+class Builder {
+  "~orpc";
+  /**
+   * Private constructor to prevent direct instantiation.
+   * Use the static `create` method to initialize a new instance with a safe initial definition.
+   */
+  constructor(definition) {
+    this["~orpc"] = definition;
+  }
+  /**
+   * Creates a fresh builder with an empty definition.
+   * Prefer the exported `os` instance over calling this directly.
+   *
+   * @see {@link https://orpc.dev/docs/procedure | Procedure}
+   */
+  static create() {
+    return new Builder({
+      errorMap: {},
+      meta: {},
+      orderedMiddlewares: []
+    });
+  }
+  /**
+   * Declares the initial context type that must be provided when executing
+   * procedures built from this builder.
+   *
+   * @see {@link https://orpc.dev/docs/context#initial-context | Context - Initial Context}
+   */
+  $context() {
+    return this;
+  }
+  /**
+   * Overrides the procedure configuration, such as disabling runtime
+   * input/output validation.
+   *
+   * @see {@link https://orpc.dev/docs/recipes/validation-customization | Validation Customization}
+   */
+  $config(config) {
+    return new Builder({
+      ...this["~orpc"],
+      ...config
+    });
+  }
+  /**
+   * Applies metadata plugins to procedures built from this builder.
+   *
+   * @see {@link https://orpc.dev/docs/metadata | Metadata}
+   */
+  meta(...plugins) {
+    const [meta, metaPlugins] = resolveMetaPlugins(
+      this["~orpc"].meta,
+      this["~orpc"].metaPlugins,
+      plugins
+    );
+    return new Builder({
+      ...this["~orpc"],
+      meta,
+      metaPlugins
+    });
+  }
+  /**
+   * Defines typesafe errors that procedures built from this builder can throw
+   * via the `errors` utility in handlers and middleware.
+   *
+   * @see {@link https://orpc.dev/docs/error-handling#typesafe-errors | Error Handling - Typesafe Errors}
+   */
+  errors(errors) {
+    let builder = new Builder({
+      ...this["~orpc"],
+      errorMap: mergeErrorMap(this["~orpc"].errorMap, errors)
+    });
+    const plugins = getHiddenMetaPlugins(errors);
+    if (plugins) {
+      builder = builder.meta(...plugins);
+    }
+    return builder;
+  }
+  /**
+   * Applies a middleware that runs before the handler of every procedure
+   * built from this builder.
+   *
+   * @see {@link https://orpc.dev/docs/middleware | Middleware}
+   */
+  use(middleware) {
+    let builder = new Builder({
+      ...this["~orpc"],
+      errorMap: mergeErrorMap(middleware["~orpc"]?.errorMap ?? {}, this["~orpc"].errorMap),
+      orderedMiddlewares: [...this["~orpc"].orderedMiddlewares, {
+        middleware,
+        inputSchemasLengthAtUse: this["~orpc"].inputSchemas?.length,
+        outputSchemasLengthAtUse: this["~orpc"].outputSchemas?.length
+      }]
+    });
+    if (middleware["~orpc"]?.metaPlugins) {
+      builder = builder.meta(...middleware["~orpc"]?.metaPlugins);
+    }
+    return builder;
+  }
+  /**
+   * Creates a standalone middleware that can be composed and applied to any
+   * compatible builder or procedure with `.use`.
+   *
+   * @see {@link https://orpc.dev/docs/middleware | Middleware}
+   */
+  middleware(middleware) {
+    const allMiddlewares = [
+      ...this["~orpc"].orderedMiddlewares.map(({ middleware: middleware2 }) => middleware2),
+      middleware
+    ];
+    let current = decorateMiddleware(allMiddlewares.shift());
+    for (const mid of allMiddlewares) {
+      current = current.use(mid);
+    }
+    current["~orpc"] = {
+      ...current["~orpc"],
+      errorMap: this["~orpc"].errorMap,
+      metaPlugins: [
+        ...toArray(this["~orpc"].metaPlugins),
+        ...toArray(middleware["~orpc"]?.metaPlugins)
+      ]
+    };
+    return current;
+  }
+  /**
+   * Defines the input schema used to validate and type the procedure input.
+   *
+   * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+   */
+  input(schema) {
+    let builder = new Builder({
+      ...this["~orpc"],
+      inputSchemas: [...toArray(this["~orpc"].inputSchemas), schema]
+    });
+    const plugins = getHiddenMetaPlugins(schema);
+    if (plugins) {
+      builder = builder.meta(...plugins);
+    }
+    return builder;
+  }
+  /**
+   * Defines the output schema used to validate and type the procedure output.
+   *
+   * @see {@link https://orpc.dev/docs/procedure#inputoutput-validation | Procedure - Input/Output Validation}
+   */
+  output(schema) {
+    let builder = new Builder({
+      ...this["~orpc"],
+      outputSchemas: [...toArray(this["~orpc"].outputSchemas), schema]
+    });
+    const plugins = getHiddenMetaPlugins(schema);
+    if (plugins) {
+      builder = builder.meta(...plugins);
+    }
+    return builder;
+  }
+  /**
+   * Defines the function that implements the procedure and completes the
+   * chain, returning a callable procedure.
+   *
+   * @see {@link https://orpc.dev/docs/procedure | Procedure}
+   */
+  handler(handler) {
+    let procedure = new DecoratedProcedure({
+      ...this["~orpc"],
+      handler
+    });
+    const plugins = getHiddenMetaPlugins(handler);
+    if (plugins) {
+      procedure = procedure.meta(...plugins);
+    }
+    return procedure;
+  }
+  /**
+   * Applies the builder's middleware, errors, and metadata to every procedure
+   * in the given router.
+   *
+   * @see {@link https://orpc.dev/docs/router#extending-router | Router - Extending Router}
+   */
+  router(router) {
+    return augmentRouter(router, {
+      ...this["~orpc"],
+      middlewares: this["~orpc"].orderedMiddlewares.map(({ middleware }) => middleware)
+    });
+  }
+  /**
+   * Like `.router`, but loads the router lazily on first access, which helps
+   * reduce startup time for large applications.
+   *
+   * @see {@link https://orpc.dev/docs/router#lazy-router | Router - Lazy Router}
+   */
+  lazy(loader) {
+    return new Lazy({
+      loader: async () => {
+        const { default: router } = await loader();
+        return {
+          default: this.router(router)
+        };
+      },
+      meta: this["~orpc"].meta,
+      metaPlugins: this["~orpc"].metaPlugins
+    });
+  }
+}
+const os = Builder.create();
+
+class ProcedureImplementer {
+  "~orpc";
+  constructor(definition) {
+    this["~orpc"] = definition;
+  }
+  "use"(middleware) {
+    return new ProcedureImplementer({
+      ...this["~orpc"],
+      orderedMiddlewares: [...this["~orpc"].orderedMiddlewares, {
+        middleware,
+        inputSchemasLengthAtUse: this["~orpc"].inputSchemas?.length,
+        outputSchemasLengthAtUse: this["~orpc"].outputSchemas?.length
+      }]
+    });
+  }
+  "handler"(handler) {
+    return new ImplementedProcedure({
+      ...this["~orpc"],
+      handler
+    });
+  }
+}
+class ImplementedProcedure extends Procedure {
+  use(middleware) {
+    return new ImplementedProcedure({
+      ...this["~orpc"],
+      orderedMiddlewares: [...this["~orpc"].orderedMiddlewares, {
+        middleware,
+        inputSchemasLengthAtUse: this["~orpc"].inputSchemas?.length,
+        outputSchemasLengthAtUse: this["~orpc"].outputSchemas?.length
+      }]
+    });
+  }
+}
+
+class SharedRouterImplementer {
+  constructor(contract, config, middlewares) {
+    this.contract = contract;
+    this.config = config;
+    this.middlewares = middlewares;
+  }
+  static create(contract, config, middlewares = []) {
+    return new SharedRouterImplementer(
+      contract,
+      config,
+      middlewares
+    );
+  }
+  use(middleware) {
+    return createRouterImplementerInternal(this.contract, this.config, [...this.middlewares, middleware]);
+  }
+  middleware(middleware) {
+    const allMiddlewares = [
+      ...this.middlewares,
+      middleware
+    ];
+    let current = decorateMiddleware(allMiddlewares.shift());
+    for (const mid of allMiddlewares) {
+      current = current.use(mid);
+    }
+    return current;
+  }
+  router(router) {
+    if (this.middlewares.length) {
+      router = augmentImplementedRouter(router, {
+        ...this.config,
+        middlewares: this.middlewares
+      });
+    }
+    return withHiddenRouterContract(router, this.contract);
+  }
+  lazy(loader) {
+    if (this.middlewares.length) {
+      const originalLoader = loader;
+      loader = async () => {
+        const { default: router } = await originalLoader();
+        return {
+          default: augmentImplementedRouter(router, {
+            ...this.config,
+            middlewares: this.middlewares
+          })
+        };
+      };
+    }
+    return new Lazy({ loader, meta: {} });
+  }
+}
+function createRouterImplementer(contract, config) {
+  return createRouterImplementerInternal(contract, config, []);
+}
+function createRouterImplementerInternal(contract, config, middlewares) {
+  if (contract instanceof ProcedureContract) {
+    return new ProcedureImplementer({
+      ...config,
+      ...contract["~orpc"],
+      orderedMiddlewares: middlewares.map((middleware) => ({ middleware }))
+    });
+  }
+  const implementer = {};
+  for (const [key, child] of Object.entries(contract)) {
+    implementer[key] = createRouterImplementerInternal(child, config, middlewares);
+  }
+  const shared = bindMethods(SharedRouterImplementer.create(contract, config, middlewares));
+  for (const [key, method] of Object.entries(shared)) {
+    if (key in implementer) {
+      const child = implementer[key];
+      implementer[key] = new Proxy(method, {
+        get(_, p) {
+          return Reflect.get(child, p);
+        }
+      });
+    } else {
+      implementer[key] = method;
+    }
+  }
+  return implementer;
+}
+
+function implement(contract, config = {}) {
+  const routerImplementer = createRouterImplementer(contract, config);
+  const implementer = new Proxy(routerImplementer, {
+    get(_, p) {
+      let method;
+      if (p === "$context") {
+        method = () => implementer;
+      } else if (p === "$config") {
+        method = (incoming) => implement(contract, { ...config, ...incoming });
+      }
+      const value = Reflect.get(routerImplementer, p);
+      if (method) {
+        if (!isTypescriptObject(value)) {
+          return method;
+        }
+        return new Proxy(method, {
+          get(_2, p2) {
+            return Reflect.get(value, p2);
+          }
+        });
+      }
+      return value;
+    }
+  });
+  return implementer;
+}
+
+function createRouterClient(router, ...rest) {
+  const options = resolveMaybeOptionalOptions(rest);
+  if (router instanceof Procedure) {
+    return createProcedureClient(router, options);
+  }
+  const procedureCaller = router instanceof Lazy ? createProcedureClient(createGuardedProcedureLazy(router), options) : {};
+  const cache = /* @__PURE__ */ new Map();
+  const recursive = new Proxy(procedureCaller, {
+    get(target, key) {
+      if (typeof key !== "string" || router instanceof Lazy && RECURSIVE_CLIENT_UNWRAP_KEYS.has(key)) {
+        return Reflect.get(target, key);
+      }
+      let nextClient = cache.get(key);
+      if (nextClient === void 0) {
+        const next = getRouter(router, [key]);
+        if (!next) {
+          return Reflect.get(target, key);
+        }
+        nextClient = createRouterClient(next, {
+          ...options,
+          path: [...toArray(options.path), key]
+        });
+        cache.set(key, nextClient);
+      }
+      return nextClient;
+    }
+  });
+  return recursive;
+}
+
+export { Builder, DecoratedProcedure, ImplementedProcedure, Lazy, Procedure, ProcedureImplementer, SharedRouterImplementer, augmentImplementedRouter, augmentRouter, createGuardedProcedureLazy, createProcedureClient, createRouterClient, createRouterImplementer, decorateMiddleware, getRouter, implement, os, withHiddenRouterContract };

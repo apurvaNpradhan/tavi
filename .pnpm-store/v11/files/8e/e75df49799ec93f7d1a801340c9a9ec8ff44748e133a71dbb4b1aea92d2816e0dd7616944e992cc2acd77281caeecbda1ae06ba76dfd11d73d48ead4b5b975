@@ -1,0 +1,21 @@
+import { Fragment, jsx } from "react/jsx-runtime";
+//#region src/react/plugin.tsx
+function createReactPlugin({ Component, ...config }) {
+	function Plugin() {
+		return {
+			...config,
+			render: (_el, props) => /* @__PURE__ */ jsx(Component, { ...props })
+		};
+	}
+	function NoOpPlugin() {
+		return {
+			...config,
+			render: (_el, _props) => /* @__PURE__ */ jsx(Fragment, {})
+		};
+	}
+	return [Plugin, NoOpPlugin];
+}
+//#endregion
+export { createReactPlugin };
+
+//# sourceMappingURL=plugin.js.map

@@ -1,0 +1,1001 @@
+import { get, isPlainObject, tryOrUndefined, getOwn, toArray, isDeepEqual, omit, isTypescriptObject } from '@orpc/shared';
+import { ORPCError, cloneORPCError } from '@orpc/client';
+import { getProcedureContractOrThrow } from '@orpc/contract';
+
+const JSON_SCHEMA_LOGIC_KEYWORDS = /* @__PURE__ */ new Set([
+  "$dynamicRef",
+  "$ref",
+  "additionalItems",
+  "additionalProperties",
+  "allOf",
+  "anyOf",
+  "const",
+  "contains",
+  "contentEncoding",
+  "contentMediaType",
+  "contentSchema",
+  "dependencies",
+  "dependentRequired",
+  "dependentSchemas",
+  "else",
+  "enum",
+  "exclusiveMaximum",
+  "exclusiveMinimum",
+  "format",
+  "if",
+  "items",
+  "maxContains",
+  "maximum",
+  "maxItems",
+  "maxLength",
+  "maxProperties",
+  "minContains",
+  "minimum",
+  "minItems",
+  "minLength",
+  "minProperties",
+  "multipleOf",
+  "not",
+  "oneOf",
+  "pattern",
+  "patternProperties",
+  "prefixItems",
+  "properties",
+  "propertyNames",
+  "required",
+  "then",
+  "type",
+  "unevaluatedItems",
+  "unevaluatedProperties",
+  "uniqueItems"
+]);
+const JSON_SCHEMA_PRIMITIVE_TYPES = /* @__PURE__ */ new Set(["string", "number", "integer", "boolean", "null"]);
+const JSON_SCHEMA_RECORD_KEYWORDS = /* @__PURE__ */ new Set(["properties", "patternProperties", "dependentSchemas", "dependencies", "$defs"]);
+
+function encodeJsonPointerSegment(segment) {
+  return segment.replaceAll("~", "~0").replaceAll("/", "~1");
+}
+function decodeJsonPointerSegment(segment) {
+  return segment.replaceAll("~1", "/").replaceAll("~0", "~");
+}
+function visitJsonSchemaRefs(value, visit, schemaLevel = true, seen = /* @__PURE__ */ new Set()) {
+  if (!value || typeof value !== "object" || seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      visitJsonSchemaRefs(item, visit, schemaLevel, seen);
+    }
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    const val = value[key];
+    if (key === "$ref" && typeof val === "string") {
+      visit(val);
+    } else if (!schemaLevel) {
+      visitJsonSchemaRefs(val, visit, true, seen);
+    } else if (JSON_SCHEMA_LOGIC_KEYWORDS.has(key) || JSON_SCHEMA_RECORD_KEYWORDS.has(key)) {
+      visitJsonSchemaRefs(val, visit, !JSON_SCHEMA_RECORD_KEYWORDS.has(key), seen);
+    }
+  }
+}
+function mapJsonSchemaRefs(value, map, schemaLevel = true, path = []) {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => mapJsonSchemaRefs(item, map, schemaLevel, [...path, index]));
+  }
+  const result = {};
+  for (const key of Object.keys(value)) {
+    const val = value[key];
+    if (key === "$ref" && typeof val === "string") {
+      result[key] = map(val, [...path, key]);
+    } else if (!schemaLevel) {
+      result[key] = mapJsonSchemaRefs(val, map, true, [...path, key]);
+    } else if (JSON_SCHEMA_LOGIC_KEYWORDS.has(key) || JSON_SCHEMA_RECORD_KEYWORDS.has(key)) {
+      result[key] = mapJsonSchemaRefs(val, map, !JSON_SCHEMA_RECORD_KEYWORDS.has(key), [...path, key]);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+function hoistRecursiveRefToDef(schema) {
+  if (typeof schema !== "object") {
+    return schema;
+  }
+  let defName;
+  const rewritten = mapJsonSchemaRefs(schema, (ref) => {
+    if (ref === "#" || ref.startsWith("#/") && !ref.startsWith("#/$defs/") && get(schema, ref.slice(2).split("/").map(decodeJsonPointerSegment)) !== void 0) {
+      defName ??= findRecursiveJsonSchemaDefName(schema.$defs);
+      return `#/$defs/${encodeJsonPointerSegment(defName)}${ref.slice(1)}`;
+    }
+    return ref;
+  });
+  if (defName === void 0) {
+    return schema;
+  }
+  const { $defs, ...rest } = rewritten;
+  return {
+    $ref: `#/$defs/${encodeJsonPointerSegment(defName)}`,
+    $defs: {
+      ...$defs,
+      [defName]: rest
+    }
+  };
+}
+function resolveJsonSchemaRootLocalRef(schema, $defs) {
+  if (typeof schema === "boolean") {
+    return schema;
+  }
+  if (arguments.length === 1) {
+    $defs = schema.$defs;
+  }
+  if (!$defs) {
+    return schema;
+  }
+  if (typeof schema.$ref !== "string" || !schema.$ref.startsWith("#/$defs/")) {
+    return schema;
+  }
+  const resolved = get($defs, schema.$ref.slice("#/$defs/".length).split("/").map(decodeJsonPointerSegment));
+  if (resolved === void 0) {
+    return schema;
+  }
+  if (typeof resolved !== "object") {
+    return resolved;
+  }
+  const { $ref: _ref, ...rest } = schema;
+  return resolveJsonSchemaRootLocalRef({
+    ...rest,
+    ...resolved
+  });
+}
+function findRecursiveJsonSchemaDefName(defs) {
+  let index = 0;
+  while (defs?.[`__schema${index}`] !== void 0) {
+    index++;
+  }
+  return `__schema${index}`;
+}
+
+var JsonSchemaType = /* @__PURE__ */ ((JsonSchemaType2) => {
+  JsonSchemaType2["Array"] = "array";
+  JsonSchemaType2["Boolean"] = "boolean";
+  JsonSchemaType2["Integer"] = "integer";
+  JsonSchemaType2["Null"] = "null";
+  JsonSchemaType2["Number"] = "number";
+  JsonSchemaType2["Object"] = "object";
+  JsonSchemaType2["String"] = "string";
+  return JsonSchemaType2;
+})(JsonSchemaType || {});
+var JsonSchemaFormat = /* @__PURE__ */ ((JsonSchemaFormat2) => {
+  JsonSchemaFormat2["Date"] = "date";
+  JsonSchemaFormat2["DateTime"] = "date-time";
+  JsonSchemaFormat2["Duration"] = "duration";
+  JsonSchemaFormat2["Email"] = "email";
+  JsonSchemaFormat2["Hostname"] = "hostname";
+  JsonSchemaFormat2["IDNEmail"] = "idn-email";
+  JsonSchemaFormat2["IDNHostname"] = "idn-hostname";
+  JsonSchemaFormat2["IPv4"] = "ipv4";
+  JsonSchemaFormat2["IPv6"] = "ipv6";
+  JsonSchemaFormat2["IRI"] = "iri";
+  JsonSchemaFormat2["IRIReference"] = "iri-reference";
+  JsonSchemaFormat2["JSONPointer"] = "json-pointer";
+  JsonSchemaFormat2["RegEx"] = "regex";
+  JsonSchemaFormat2["RelativeJSONPointer"] = "relative-json-pointer";
+  JsonSchemaFormat2["Time"] = "time";
+  JsonSchemaFormat2["URI"] = "uri";
+  JsonSchemaFormat2["URIReference"] = "uri-reference";
+  JsonSchemaFormat2["URITemplate"] = "uri-template";
+  JsonSchemaFormat2["UUID"] = "uuid";
+  return JsonSchemaFormat2;
+})(JsonSchemaFormat || {});
+var JsonSchemaXNativeType = /* @__PURE__ */ ((JsonSchemaXNativeType2) => {
+  JsonSchemaXNativeType2["BigInt"] = "bigint";
+  JsonSchemaXNativeType2["Date"] = "date";
+  JsonSchemaXNativeType2["Url"] = "url";
+  JsonSchemaXNativeType2["Set"] = "set";
+  JsonSchemaXNativeType2["Map"] = "map";
+  return JsonSchemaXNativeType2;
+})(JsonSchemaXNativeType || {});
+
+const UNSATISFIED = 0;
+const LOOSELY_SATISFIED = 1;
+const SATISFIED = 2;
+function minSatisfaction(a, b) {
+  return a < b ? a : b;
+}
+class JsonSchemaCoercer {
+  coerce([schema, optional], value) {
+    if (optional && value === void 0) {
+      return value;
+    }
+    const [, coerced] = this.coerceInternal(schema, schema, value);
+    return coerced;
+  }
+  coerceInternal(rootSchema, schema, value, appliedRefs) {
+    if (typeof schema === "boolean") {
+      return [schema ? SATISFIED : UNSATISFIED, value];
+    }
+    if (Array.isArray(schema.type)) {
+      return this.coerceInternal(
+        rootSchema,
+        { anyOf: schema.type.map((type) => ({ ...schema, type })) },
+        value,
+        appliedRefs
+      );
+    }
+    let coerced = value;
+    let satisfied = SATISFIED;
+    if (typeof schema.$ref === "string") {
+      const resolved = schema.$ref.startsWith("#/") ? get(rootSchema, schema.$ref.slice("#/".length).split("/").map(decodeJsonPointerSegment)) : schema.$ref === "#" ? rootSchema : void 0;
+      if (resolved !== void 0 && !appliedRefs?.has(resolved)) {
+        appliedRefs ??= /* @__PURE__ */ new Set();
+        appliedRefs.add(resolved);
+        const [subSatisfied, subCoerced] = this.coerceInternal(rootSchema, resolved, coerced, appliedRefs);
+        appliedRefs.delete(resolved);
+        coerced = subCoerced;
+        satisfied = minSatisfaction(satisfied, subSatisfied);
+      }
+    }
+    const enumValues = schema.const !== void 0 ? [schema.const] : schema.enum;
+    if (enumValues !== void 0 && !enumValues.includes(coerced)) {
+      if (typeof coerced === "string") {
+        const numberValue = stringToNumber(coerced);
+        if (enumValues.includes(numberValue)) {
+          coerced = numberValue;
+        } else {
+          const booleanValue = stringToBoolean(coerced);
+          if (enumValues.includes(booleanValue)) {
+            coerced = booleanValue;
+          } else {
+            satisfied = UNSATISFIED;
+          }
+        }
+      } else {
+        satisfied = UNSATISFIED;
+      }
+    }
+    if (schema.type) {
+      switch (schema.type) {
+        case "null": {
+          if (coerced !== null) {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case "string": {
+          if (typeof coerced !== "string") {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case "number": {
+          if (typeof coerced === "string") {
+            coerced = stringToNumber(coerced);
+          }
+          if (typeof coerced !== "number") {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case "integer": {
+          if (typeof coerced === "string") {
+            coerced = stringToInteger(coerced);
+          }
+          if (typeof coerced !== "number" || !Number.isInteger(coerced)) {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case "boolean": {
+          if (typeof coerced === "string") {
+            coerced = stringToBoolean(coerced);
+          }
+          if (typeof coerced !== "boolean") {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case "array": {
+          if (Array.isArray(coerced)) {
+            const prefixItemSchemas = "prefixItems" in schema ? toArray(schema.prefixItems) : Array.isArray(schema.items) ? schema.items : [];
+            const itemSchema = Array.isArray(schema.items) ? schema.additionalItems : schema.items;
+            let shouldUseCoercedItems = false;
+            const coercedItems = coerced.map((item, i) => {
+              const subSchema = prefixItemSchemas[i] ?? itemSchema;
+              if (subSchema === void 0) {
+                satisfied = minSatisfaction(satisfied, LOOSELY_SATISFIED);
+                return item;
+              }
+              const [subSatisfied, subCoerced] = this.coerceInternal(rootSchema, subSchema, item);
+              satisfied = minSatisfaction(satisfied, subSatisfied);
+              if (subCoerced !== item) {
+                shouldUseCoercedItems = true;
+              }
+              return subCoerced;
+            });
+            if (coercedItems.length < prefixItemSchemas.length) {
+              satisfied = UNSATISFIED;
+            }
+            if (shouldUseCoercedItems) {
+              coerced = coercedItems;
+            }
+          } else {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case "object": {
+          if (Array.isArray(coerced)) {
+            coerced = { ...coerced };
+          }
+          if (isPlainObject(coerced)) {
+            let shouldUseCoercedItems = false;
+            const coercedItems = { ...coerced };
+            const patternProperties = Object.entries(schema.patternProperties ?? {}).flatMap(([key, value2]) => {
+              const pattern = tryOrUndefined(() => new RegExp(key));
+              return pattern ? [[pattern, value2]] : [];
+            });
+            const propertySchemas = schema.properties ?? {};
+            for (const key of Object.keys(coerced)) {
+              const value2 = coerced[key];
+              const subSchema = getOwn(propertySchemas, key) ?? patternProperties.find(([pattern]) => pattern.test(key))?.[1] ?? schema.additionalProperties;
+              if (value2 !== void 0 || schema.required?.includes(key)) {
+                if (subSchema === void 0) {
+                  satisfied = minSatisfaction(satisfied, LOOSELY_SATISFIED);
+                } else {
+                  const [subSatisfied, subCoerced] = this.coerceInternal(rootSchema, subSchema, value2);
+                  coercedItems[key] = subCoerced;
+                  satisfied = minSatisfaction(satisfied, subSatisfied);
+                  if (subCoerced !== value2) {
+                    shouldUseCoercedItems = true;
+                  }
+                }
+              }
+            }
+            if (schema.required?.some((key) => !Object.hasOwn(coercedItems, key))) {
+              satisfied = UNSATISFIED;
+            }
+            if (shouldUseCoercedItems) {
+              coerced = coercedItems;
+            }
+          } else {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+      }
+    }
+    if ("x-native-type" in schema && typeof schema["x-native-type"] === "string") {
+      switch (schema["x-native-type"]) {
+        case JsonSchemaXNativeType.Date: {
+          if (typeof coerced === "string") {
+            coerced = stringToDate(coerced);
+          }
+          if (!(coerced instanceof Date)) {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case JsonSchemaXNativeType.BigInt: {
+          switch (typeof coerced) {
+            case "string":
+              coerced = stringToBigInt(coerced);
+              break;
+            case "number":
+              coerced = numberToBigInt(coerced);
+              break;
+          }
+          if (typeof coerced !== "bigint") {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case JsonSchemaXNativeType.Url: {
+          if (typeof coerced === "string") {
+            coerced = stringToURL(coerced);
+          }
+          if (!(coerced instanceof URL)) {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case JsonSchemaXNativeType.Set: {
+          if (Array.isArray(coerced)) {
+            coerced = arrayToSet(coerced);
+          }
+          if (!(coerced instanceof Set)) {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+        case JsonSchemaXNativeType.Map: {
+          if (Array.isArray(coerced)) {
+            coerced = arrayToMap(coerced);
+          }
+          if (!(coerced instanceof Map)) {
+            satisfied = UNSATISFIED;
+          }
+          break;
+        }
+      }
+    }
+    if (schema.allOf) {
+      for (const subSchema of schema.allOf) {
+        const [subSatisfied, subCoerced] = this.coerceInternal(rootSchema, subSchema, coerced, appliedRefs);
+        coerced = subCoerced;
+        satisfied = minSatisfaction(satisfied, subSatisfied);
+      }
+    }
+    for (const key of ["anyOf", "oneOf"]) {
+      if (schema[key]) {
+        let best;
+        for (const subSchema of schema[key]) {
+          const [subSatisfied, subCoerced] = this.coerceInternal(rootSchema, subSchema, coerced, appliedRefs);
+          if (subSatisfied === UNSATISFIED) {
+            continue;
+          }
+          if (subCoerced === coerced) {
+            best = { satisfied: subSatisfied, value: subCoerced };
+            break;
+          }
+          if (!best || subSatisfied > best.satisfied) {
+            best = { satisfied: subSatisfied, value: subCoerced };
+          }
+        }
+        if (best) {
+          coerced = best.value;
+          satisfied = minSatisfaction(satisfied, best.satisfied);
+        } else {
+          satisfied = UNSATISFIED;
+        }
+      }
+    }
+    if (typeof schema.not !== "undefined") {
+      const [notSatisfied] = this.coerceInternal(rootSchema, schema.not, coerced, appliedRefs);
+      if (notSatisfied !== UNSATISFIED) {
+        satisfied = UNSATISFIED;
+      }
+    }
+    return [satisfied, coerced];
+  }
+}
+const NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+function stringToNumber(value) {
+  if (!NUMBER_PATTERN.test(value)) {
+    return value;
+  }
+  const num = Number(value);
+  if (num < Number.MIN_SAFE_INTEGER || num > Number.MAX_SAFE_INTEGER) {
+    return value;
+  }
+  return num;
+}
+const INTEGER_PATTERN = /^-?(?:0|[1-9]\d*)$/;
+function stringToInteger(value) {
+  if (!INTEGER_PATTERN.test(value)) {
+    return value;
+  }
+  const num = Number(value);
+  if (!Number.isSafeInteger(num)) {
+    return value;
+  }
+  return num;
+}
+function stringToBigInt(value) {
+  if (!INTEGER_PATTERN.test(value)) {
+    return value;
+  }
+  return BigInt(value);
+}
+function numberToBigInt(value) {
+  if (!Number.isInteger(value)) {
+    return value;
+  }
+  return BigInt(value);
+}
+function stringToBoolean(value) {
+  const lower = value.toLowerCase();
+  if (lower === "false" || lower === "off") {
+    return false;
+  }
+  if (lower === "true" || lower === "on") {
+    return true;
+  }
+  return value;
+}
+const DATE_TIME_PATTERN = /^[+-]?\d{4,6}-\d{1,2}-\d{1,2}(?:[T ].*)?$/;
+function stringToDate(value) {
+  if (!DATE_TIME_PATTERN.test(value)) {
+    return value;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date;
+}
+function stringToURL(value) {
+  return tryOrUndefined(() => new URL(value)) ?? value;
+}
+function arrayToSet(value) {
+  const set = new Set(value);
+  if (set.size !== value.length) {
+    return value;
+  }
+  return set;
+}
+function arrayToMap(value) {
+  if (value.some((item) => !Array.isArray(item) || item.length !== 2)) {
+    return value;
+  }
+  const result = new Map(value);
+  if (result.size !== value.length) {
+    return value;
+  }
+  return result;
+}
+
+function isJsonPrimitiveSchema(schema) {
+  if (typeof schema === "boolean") {
+    return false;
+  }
+  if (typeof schema.type === "string" && JSON_SCHEMA_PRIMITIVE_TYPES.has(schema.type)) {
+    return true;
+  }
+  if (schema.const !== void 0) {
+    return true;
+  }
+  if (schema.enum !== void 0) {
+    return true;
+  }
+  return false;
+}
+function isJsonFileSchema(schema) {
+  return typeof schema !== "boolean" && schema.type === "string" && (typeof schema.contentMediaType === "string" || schema.format === "binary" || schema.contentEncoding === "binary");
+}
+function isJsonObjectSchema(schema) {
+  return typeof schema !== "boolean" && schema.type === "object";
+}
+function isJsonArraySchema(schema) {
+  return typeof schema !== "boolean" && schema.type === "array";
+}
+function isUnconstrainedSchema(schema) {
+  if (typeof schema === "boolean") {
+    return schema;
+  }
+  if (Object.keys(schema).every((k) => !JSON_SCHEMA_LOGIC_KEYWORDS.has(k))) {
+    return true;
+  }
+  return false;
+}
+function ensureJsonSchemaObject(schema) {
+  if (typeof schema === "boolean") {
+    return schema ? {} : { not: {} };
+  }
+  return schema;
+}
+
+function promoteJsonSchemaDefs(schema, mergedDefs, basePath) {
+  const { $defs, ...rootBody } = schema;
+  const renameMap = /* @__PURE__ */ new Map();
+  const mapRef = (ref) => {
+    if (ref === "#") {
+      return basePath;
+    }
+    if (ref.startsWith("#/$defs/")) {
+      const [encodedName, ...segments] = ref.slice("#/$defs/".length).split("/");
+      const newName = renameMap.get(decodeJsonPointerSegment(encodedName));
+      return newName === void 0 ? ref : ["#/$defs", encodeJsonPointerSegment(newName), ...segments].join("/");
+    }
+    if (ref.startsWith("#/") && get(rootBody, ref.slice(2).split("/").map(decodeJsonPointerSegment)) !== void 0) {
+      return `${basePath}/${ref.slice(2)}`;
+    }
+    return ref;
+  };
+  const defs = Object.entries($defs ?? {}).filter(([, def]) => def !== void 0);
+  if (defs.length > 0) {
+    const promoted = /* @__PURE__ */ new Map();
+    const reserved = /* @__PURE__ */ new Set([...mergedDefs.keys(), ...defs.map(([name]) => name)]);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [name, def] of defs) {
+        const body = mapJsonSchemaRefs(def, mapRef);
+        promoted.set(name, body);
+        if (renameMap.has(name) || !mergedDefs.has(name) || isDeepEqual(mergedDefs.get(name), body)) {
+          continue;
+        }
+        let counter = 2;
+        while (reserved.has(`${name}${counter}`)) {
+          counter++;
+        }
+        reserved.add(`${name}${counter}`);
+        renameMap.set(name, `${name}${counter}`);
+        changed = true;
+      }
+    }
+    for (const [name, body] of promoted) {
+      mergedDefs.set(renameMap.get(name) ?? name, body);
+    }
+  }
+  return mapJsonSchemaRefs(rootBody, mapRef);
+}
+function combineJsonSchemasWithComposition(keyword, schemas) {
+  if (schemas.length <= 1) {
+    return schemas[0] ?? true;
+  }
+  const mergedDefs = /* @__PURE__ */ new Map();
+  const compositionBranches = [];
+  for (let i = 0; i < schemas.length; i++) {
+    const schema = schemas[i];
+    compositionBranches.push(typeof schema === "boolean" ? schema : promoteJsonSchemaDefs(schema, mergedDefs, `#/${keyword}/${i}`));
+  }
+  const result = { [keyword]: compositionBranches };
+  if (mergedDefs.size > 0) {
+    result.$defs = Object.fromEntries(mergedDefs);
+  }
+  return result;
+}
+function combineJsonObjectSchemaEntries(entries) {
+  const properties = /* @__PURE__ */ new Map();
+  const required = [];
+  const mergedDefs = /* @__PURE__ */ new Map();
+  for (const [name, propertySchema, optional] of entries) {
+    if (!optional) {
+      required.push(name);
+    }
+    properties.set(name, typeof propertySchema === "boolean" ? propertySchema : promoteJsonSchemaDefs(propertySchema, mergedDefs, `#/properties/${encodeJsonPointerSegment(name)}`));
+  }
+  const schema = {
+    type: "object",
+    properties: Object.fromEntries(properties)
+  };
+  if (required.length > 0) {
+    schema.required = required;
+  }
+  if (mergedDefs.size > 0) {
+    schema.$defs = Object.fromEntries(mergedDefs);
+  }
+  return schema;
+}
+function extractJsonObjectSchemaEntries(schema) {
+  schema = hoistRecursiveRefToDef(schema);
+  if (typeof schema !== "object") {
+    return void 0;
+  }
+  const result = extractJsonObjectSchemaEntriesInternal(omit(schema, ["$defs"]), schema.$defs, /* @__PURE__ */ new Set());
+  if (!result.objectLike) {
+    return void 0;
+  }
+  return result.entries.map(([n, s, ...r]) => [n, withRootDefs(s, schema.$defs), ...r]);
+}
+function extractJsonObjectSchemaEntriesInternal(schema, $defs, resolvingRefs) {
+  if (typeof schema !== "object") {
+    return { entries: [], objectLike: false };
+  }
+  if (typeof schema.$ref === "string") {
+    if (resolvingRefs.has(schema.$ref)) {
+      return { entries: [], objectLike: true };
+    }
+    const resolved = resolveJsonSchemaRootLocalRef(schema, $defs);
+    if (resolved !== schema) {
+      return extractJsonObjectSchemaEntriesInternal(resolved, $defs, new Set(resolvingRefs).add(schema.$ref));
+    }
+  }
+  const sources = [];
+  if (schema.properties) {
+    sources.push({
+      entries: Object.entries(schema.properties).map(([name, propertySchema]) => {
+        return [
+          name,
+          propertySchema,
+          !schema.required?.includes(name)
+        ];
+      }),
+      source: "direct"
+    });
+  }
+  let objectLike = schema.type === "object" || schema.properties !== void 0 || schema.required !== void 0 || schema.additionalProperties !== void 0;
+  for (const keyword of ["anyOf", "oneOf", "allOf"]) {
+    const branches = schema[keyword];
+    if (branches === void 0) {
+      continue;
+    }
+    const branchResults = branches.map((branch) => extractJsonObjectSchemaEntriesInternal(branch, $defs, resolvingRefs));
+    if (branchResults.some((result) => !result.objectLike)) {
+      return { entries: [], objectLike: false };
+    }
+    const entriesByName = /* @__PURE__ */ new Map();
+    for (const result of branchResults) {
+      for (const entry of result.entries) {
+        const entries = entriesByName.get(entry[0]);
+        if (entries) {
+          entries.push(entry);
+        } else {
+          entriesByName.set(entry[0], [entry]);
+        }
+      }
+    }
+    objectLike = true;
+    sources.push({
+      entries: Array.from(entriesByName.entries()).map(([name, entries]) => {
+        const schemas = deduplicateJsonSchemas(entries.map((entry) => entry[1]));
+        const required = keyword === "allOf" ? entries.some((entry) => !entry[2]) : branchResults.every((result) => {
+          const entry = result.entries.find((item) => item[0] === name);
+          return entry !== void 0 && !entry[2];
+        });
+        return [
+          name,
+          schemas.length === 1 ? schemas[0] : keyword === "allOf" ? { allOf: schemas } : { anyOf: schemas },
+          !required
+        ];
+      }),
+      source: keyword
+    });
+  }
+  const sourceEntries = /* @__PURE__ */ new Map();
+  for (const { entries, source } of sources) {
+    for (const entry of entries) {
+      const existing = sourceEntries.get(entry[0]);
+      if (existing) {
+        existing[source] = entry;
+      } else {
+        sourceEntries.set(entry[0], { [source]: entry });
+      }
+    }
+  }
+  return {
+    entries: Array.from(sourceEntries.entries()).map(([name, entries]) => {
+      const schemas = deduplicateJsonSchemas([
+        entries.direct?.[1],
+        entries.allOf?.[1],
+        entries.anyOf?.[1],
+        entries.oneOf?.[1]
+      ].filter((schema2) => schema2 !== void 0));
+      return [
+        name,
+        schemas.length === 1 ? schemas[0] : { allOf: schemas },
+        [entries.direct, entries.allOf, entries.anyOf, entries.oneOf].every((entry) => entry === void 0 || entry[2])
+      ];
+    }),
+    objectLike
+  };
+}
+function flattenJsonUnionSchema(schema) {
+  return deduplicateJsonSchemas(flattenJsonUnionSchemaInternal(schema, /* @__PURE__ */ new Set()));
+}
+function flattenJsonUnionSchemaInternal(schema, resolvingRefs) {
+  if (typeof schema !== "object") {
+    return [schema];
+  }
+  if (typeof schema.$ref === "string") {
+    if (resolvingRefs.has(schema.$ref)) {
+      return [];
+    }
+    const resolved = resolveJsonSchemaRootLocalRef(schema);
+    if (resolved !== schema) {
+      const result = flattenJsonUnionSchemaInternal(resolved, new Set(resolvingRefs).add(schema.$ref));
+      if (result.length > 1) {
+        return result;
+      }
+    }
+  }
+  const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = schema;
+  const entries = Object.entries(rest).filter(([, val]) => val !== void 0);
+  for (const keyword of ["anyOf", "oneOf"]) {
+    if (schema[keyword]) {
+      return schema[keyword].flatMap((s) => {
+        s = ensureJsonSchemaObject(s);
+        const mergedSchema = {
+          ...s,
+          ...Object.fromEntries(entries.filter(([key]) => s[key] === void 0)),
+          $defs: schema.$defs
+        };
+        const conflicts = entries.filter(([key]) => s[key] !== void 0);
+        if (conflicts.length) {
+          mergedSchema.allOf = [...toArray(mergedSchema.allOf), Object.fromEntries(conflicts)];
+        }
+        return flattenJsonUnionSchemaInternal(mergedSchema, resolvingRefs);
+      });
+    }
+  }
+  return [schema];
+}
+function matchArrayableJsonSchema(schema) {
+  const schemas = flattenJsonUnionSchema(schema);
+  if (schemas.length !== 2) {
+    return void 0;
+  }
+  const arraySchema = schemas.find(isJsonArraySchema);
+  if (arraySchema === void 0) {
+    return void 0;
+  }
+  const items1 = arraySchema.items ?? true;
+  const items2 = schemas.find((s) => s !== arraySchema);
+  const logicItem1 = Object.fromEntries(
+    Object.entries(ensureJsonSchemaObject(items1)).filter(([key]) => JSON_SCHEMA_LOGIC_KEYWORDS.has(key))
+  );
+  const logicItem2 = Object.fromEntries(
+    Object.entries(ensureJsonSchemaObject(items2)).filter(([key]) => JSON_SCHEMA_LOGIC_KEYWORDS.has(key))
+  );
+  if (!isDeepEqual(logicItem1, logicItem2)) {
+    return void 0;
+  }
+  return [items2, arraySchema];
+}
+function deduplicateJsonSchemas(schemas) {
+  const result = [];
+  for (const schema of schemas) {
+    if (result.some((i) => isDeepEqual(i, schema))) {
+      continue;
+    }
+    result.push(schema);
+  }
+  return result;
+}
+function withRootDefs(schema, $defs) {
+  if (typeof schema === "boolean" || !$defs) {
+    return schema;
+  }
+  return { ...schema, $defs };
+}
+
+class DelegatingJsonSchemaConverter {
+  constructor(converters = []) {
+    this.converters = converters;
+  }
+  convert(schema, direction) {
+    for (const converter of this.converters) {
+      if (converter.condition(schema, direction)) {
+        return converter.convert(schema, direction);
+      }
+    }
+    const result = schema?.["~standard"].validate(void 0);
+    const optional = result instanceof Promise ? false : !result?.issues?.length;
+    if (schema && "jsonSchema" in schema["~standard"] && schema["~standard"].jsonSchema) {
+      try {
+        return [
+          schema["~standard"].jsonSchema[direction](),
+          optional
+        ];
+      } catch {
+      }
+    }
+    return [{}, optional];
+  }
+}
+
+class StandardJsonSchemaConverter {
+  condition(schema, _direction) {
+    return Boolean(
+      schema && "jsonSchema" in schema["~standard"] && isTypescriptObject(schema["~standard"].jsonSchema) && "input" in schema["~standard"].jsonSchema && typeof schema["~standard"].jsonSchema.input === "function" && "output" in schema["~standard"].jsonSchema && typeof schema["~standard"].jsonSchema.output === "function"
+    );
+  }
+  convert(schema, direction) {
+    return this.convertInternal(schema, direction);
+  }
+  convertInternal(schema, direction) {
+    try {
+      const jsonSchema = direction === "input" ? schema["~standard"].jsonSchema.input({ target: "draft-2020-12" }) : schema["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+      let optional = false;
+      try {
+        const result = schema["~standard"].validate(void 0);
+        if (!(result instanceof Promise) && !result.issues) {
+          optional = direction === "input" ? true : result.value === void 0;
+        }
+      } catch {
+      }
+      return [jsonSchema, optional];
+    } catch {
+      return [{}, true];
+    }
+  }
+}
+
+class SmartCoercionHandlerPlugin {
+  name = "~smart-coercion";
+  converter;
+  coercer;
+  cache = /* @__PURE__ */ new WeakMap();
+  constructor(options = {}) {
+    this.converter = new DelegatingJsonSchemaConverter([
+      ...toArray(options.converters),
+      new StandardJsonSchemaConverter()
+    ]);
+    this.coercer = new JsonSchemaCoercer();
+  }
+  init(options) {
+    return {
+      ...options,
+      clientInterceptors: [
+        ({ next, input, ...interceptorOptions }) => {
+          const inputSchemas = interceptorOptions.procedure["~orpc"].inputSchemas;
+          if (!inputSchemas) {
+            return next();
+          }
+          const coercedInput = this.coerceValue(inputSchemas, input);
+          return next({ ...interceptorOptions, input: coercedInput });
+        },
+        ...toArray(options.clientInterceptors)
+      ]
+    };
+  }
+  coerceValue(schemas, value) {
+    for (const schema of schemas) {
+      let converted = this.cache.get(schema);
+      if (!converted) {
+        converted = this.converter.convert(schema, "input");
+        this.cache.set(schema, converted);
+      }
+      value = this.coercer.coerce(converted, value);
+    }
+    return value;
+  }
+}
+
+class SmartCoercionLinkPlugin {
+  constructor(contract, options = {}) {
+    this.contract = contract;
+    this.converter = new DelegatingJsonSchemaConverter([
+      ...toArray(options.converters),
+      new StandardJsonSchemaConverter()
+    ]);
+    this.coercer = new JsonSchemaCoercer();
+  }
+  name = "~smart-coercion";
+  /**
+   * Output and error values should be coerced before validation.
+   */
+  after = ["~response-validation"];
+  converter;
+  coercer;
+  cache = /* @__PURE__ */ new WeakMap();
+  init(options) {
+    return {
+      ...options,
+      interceptors: [
+        ...toArray(options.interceptors),
+        async ({ next, path }) => {
+          const procedure = getProcedureContractOrThrow(this.contract, path);
+          try {
+            const output = await next();
+            const outputSchemas = procedure["~orpc"].outputSchemas;
+            if (!outputSchemas) {
+              return output;
+            }
+            const coercedOutput = this.coerceValue(outputSchemas, output);
+            return coercedOutput;
+          } catch (error) {
+            if (!(error instanceof ORPCError) || !error.defined) {
+              throw error;
+            }
+            const errorMap = procedure["~orpc"].errorMap;
+            const dataSchema = getOwn(errorMap, error.code)?.data;
+            if (!dataSchema) {
+              throw error;
+            }
+            const cloned = cloneORPCError(error);
+            cloned.data = this.coerceValue([dataSchema], cloned.data);
+            throw cloned;
+          }
+        }
+      ]
+    };
+  }
+  coerceValue(schemas, value) {
+    for (const schema of schemas) {
+      let converted = this.cache.get(schema);
+      if (!converted) {
+        converted = this.converter.convert(schema, "output");
+        this.cache.set(schema, converted);
+      }
+      value = this.coercer.coerce(converted, value);
+    }
+    return value;
+  }
+}
+
+export { DelegatingJsonSchemaConverter, JsonSchemaCoercer, JsonSchemaFormat, JsonSchemaType, JsonSchemaXNativeType, SmartCoercionHandlerPlugin, SmartCoercionLinkPlugin, StandardJsonSchemaConverter, combineJsonObjectSchemaEntries, combineJsonSchemasWithComposition, decodeJsonPointerSegment, deduplicateJsonSchemas, encodeJsonPointerSegment, ensureJsonSchemaObject, extractJsonObjectSchemaEntries, flattenJsonUnionSchema, hoistRecursiveRefToDef, isJsonArraySchema, isJsonFileSchema, isJsonObjectSchema, isJsonPrimitiveSchema, isUnconstrainedSchema, mapJsonSchemaRefs, matchArrayableJsonSchema, resolveJsonSchemaRootLocalRef, visitJsonSchemaRefs };

@@ -1,0 +1,63 @@
+//#region src/core/utils/config.utils.ts
+var STORAGE_KEY = "tanstack-devtools-a11y-config";
+/**
+* Default plugin configuration
+*/
+var DEFAULT_CONFIG = {
+	threshold: "serious",
+	ruleSet: "wcag21aa",
+	showOverlays: true,
+	persistSettings: true,
+	disabledRules: []
+};
+/**
+* Load configuration from localStorage
+*/
+function loadConfig() {
+	if (typeof localStorage === "undefined") return DEFAULT_CONFIG;
+	try {
+		const stored = localStorage.getItem(STORAGE_KEY);
+		if (stored) {
+			const parsed = JSON.parse(stored);
+			return {
+				...DEFAULT_CONFIG,
+				...parsed
+			};
+		}
+	} catch (error) {
+		console.warn("[A11y Config] Failed to load config from localStorage:", error);
+	}
+	return DEFAULT_CONFIG;
+}
+/**
+* Save configuration to localStorage
+*/
+function saveConfig(config) {
+	if (typeof localStorage === "undefined") return;
+	try {
+		const updated = {
+			...loadConfig(),
+			...config
+		};
+		localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+	} catch (error) {
+		console.warn("[A11y Config] Failed to save config to localStorage:", error);
+	}
+}
+/**
+* Merge user options with defaults
+*/
+function mergeConfig(options = {}) {
+	if (options.persistSettings !== false) return {
+		...loadConfig(),
+		...options
+	};
+	return {
+		...DEFAULT_CONFIG,
+		...options
+	};
+}
+//#endregion
+export { mergeConfig, saveConfig };
+
+//# sourceMappingURL=config.utils.js.map

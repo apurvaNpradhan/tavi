@@ -1,0 +1,177 @@
+import { getOwn, toArray, getConstructor, isTypescriptObject } from '@orpc/shared';
+import { cloneORPCError } from '@orpc/client';
+
+function mergeErrorMap(errorMap1, errorMap2) {
+  return { ...errorMap1, ...errorMap2 };
+}
+async function reconcileORPCError(map, error) {
+  const config = getOwn(map, error.code);
+  if (!config) {
+    if (!error.defined) {
+      return error;
+    }
+    const cloned2 = cloneORPCError(error);
+    cloned2.defined = false;
+    return cloned2;
+  }
+  if (!config.data) {
+    if (error.defined) {
+      return error;
+    }
+    const cloned2 = cloneORPCError(error);
+    cloned2.defined = true;
+    return cloned2;
+  }
+  const validated = await config.data["~standard"].validate(error.data);
+  if (validated.issues) {
+    if (!error.defined) {
+      return error;
+    }
+    const cloned2 = cloneORPCError(error);
+    cloned2.defined = false;
+    return cloned2;
+  }
+  if (error.data === validated.value && error.defined) {
+    return error;
+  }
+  const cloned = cloneORPCError(error);
+  cloned.data = validated.value;
+  cloned.defined = true;
+  return cloned;
+}
+
+function resolveMetaPlugins(baseMeta, existingPlugins, incomingPlugins) {
+  existingPlugins = toArray(existingPlugins);
+  incomingPlugins = toArray(incomingPlugins);
+  let meta = baseMeta;
+  for (const plugin of incomingPlugins) {
+    if (plugin.init) {
+      meta = plugin.init(meta);
+    }
+  }
+  const plugins = [...existingPlugins, ...incomingPlugins];
+  for (const plugin of plugins) {
+    if (plugin.apply) {
+      meta = plugin.apply(meta);
+    }
+  }
+  return [meta, plugins];
+}
+function defineMeta(name, merge) {
+  const metaPlugin = (value) => ({
+    name,
+    init: (meta) => {
+      const current = meta[name];
+      return {
+        ...meta,
+        [name]: merge(value, current)
+      };
+    }
+  });
+  const getMeta = (procedureOrLazy) => procedureOrLazy["~orpc"].meta[name];
+  return [metaPlugin, getMeta];
+}
+
+class ProcedureContract {
+  "~orpc";
+  constructor(def) {
+    this["~orpc"] = def;
+  }
+  /**
+   * Checks if the given instance satisfies the {@link ProcedureContract} class/interface.
+   */
+  static [Symbol.hasInstance](instance) {
+    if (this !== ProcedureContract) {
+      return Function.prototype[Symbol.hasInstance].call(this, instance);
+    }
+    const constructor = getConstructor(instance);
+    if (constructor === ProcedureContract) {
+      return true;
+    }
+    return isTypescriptObject(instance) && isTypescriptObject(instance["~orpc"]) && isTypescriptObject(instance["~orpc"].errorMap) && isTypescriptObject(instance["~orpc"].meta) && (instance["~orpc"].inputSchemas === void 0 || Array.isArray(instance["~orpc"].inputSchemas)) && (instance["~orpc"].outputSchemas === void 0 || Array.isArray(instance["~orpc"].outputSchemas));
+  }
+}
+
+function augmentContractRouter(router, options) {
+  if (router instanceof ProcedureContract) {
+    const [meta, metaPlugins] = resolveMetaPlugins(
+      options.meta,
+      options.metaPlugins,
+      router["~orpc"].metaPlugins
+    );
+    const enhanced2 = new ProcedureContract({
+      ...router["~orpc"],
+      errorMap: mergeErrorMap(options.errorMap, router["~orpc"].errorMap),
+      meta,
+      metaPlugins
+    });
+    return enhanced2;
+  }
+  if (!isTypescriptObject(router)) {
+    return router;
+  }
+  const enhanced = {};
+  for (const key of Object.keys(router)) {
+    enhanced[key] = augmentContractRouter(router[key], options);
+  }
+  return enhanced;
+}
+function getRouterContract(router, path) {
+  let current = router;
+  for (let i = 0; i < path.length; i++) {
+    const segment = path[i];
+    if (!isTypescriptObject(current)) {
+      return void 0;
+    }
+    if (current instanceof ProcedureContract) {
+      return void 0;
+    }
+    current = current[segment];
+  }
+  if (!isTypescriptObject(current)) {
+    return void 0;
+  }
+  return current;
+}
+function getProcedureContractOrThrow(router, path) {
+  const procedure = getRouterContract(router, path);
+  if (!(procedure instanceof ProcedureContract)) {
+    throw new TypeError(`No valid procedure found at path "${path.join(".")}", this may happen when the router contract is not properly configured.`);
+  }
+  return procedure;
+}
+function minifyRouterContract(router) {
+  if (router instanceof ProcedureContract) {
+    const procedure = {
+      "~orpc": {
+        errorMap: {},
+        meta: router["~orpc"].meta
+      }
+    };
+    return procedure;
+  }
+  if (!isTypescriptObject(router)) {
+    return router;
+  }
+  const json = {};
+  for (const [key, child] of Object.entries(router)) {
+    json[key] = minifyRouterContract(child);
+  }
+  return json;
+}
+
+class ValidationError extends Error {
+  name = "ValidationError";
+  /**
+   * This array is readonly because the upstream Standard Schema returns readonly issues.
+   */
+  issues;
+  invalidData;
+  constructor(options) {
+    super(options.message, options);
+    this.issues = options.issues;
+    this.invalidData = options.invalidData;
+  }
+}
+
+export { ProcedureContract as P, ValidationError as V, augmentContractRouter as a, getProcedureContractOrThrow as b, minifyRouterContract as c, defineMeta as d, reconcileORPCError as e, getRouterContract as g, mergeErrorMap as m, resolveMetaPlugins as r };

@@ -1,0 +1,111 @@
+import { StandardBodyHint, StandardBody, StandardHeaders, StandardLazyRequest, StandardResponse, StandardLazyResponse, StandardUrl } from '@standard-server/core';
+import { AsyncIteratorClass } from '@standard-server/shared';
+
+declare function toAsyncIteratorObject(stream: ReadableStream<Uint8Array<ArrayBuffer>> | null): AsyncIteratorClass<unknown>;
+interface ToEventStreamOptions {
+    /**
+     * If enabled, an initial comment is sent immediately upon stream start to flush headers.
+     * This allows the receiving side to establish the connection without waiting for the first event.
+     *
+     * @default { enabled: true }
+     */
+    initialComment?: undefined | {
+        /**
+         * If true, an initial comment is sent immediately upon stream start to flush headers.
+         * This allows the receiving side to establish the connection without waiting for the first event.
+         *
+         * @default true
+         */
+        enabled?: boolean;
+        /**
+         * The content of the initial comment sent upon stream start. Must not include newline characters.
+         *
+         * @default ''
+         */
+        comment?: string;
+    };
+    /**
+     * If enabled, a ping comment is sent periodically to keep the connection alive.
+     *
+     * @default { enabled: true }
+     */
+    keepAlive?: undefined | {
+        /**
+         * If true, a ping comment is sent periodically to keep the connection alive.
+         *
+         * @default true
+         */
+        enabled: boolean;
+        /**
+         * Interval (in milliseconds) between ping comments sent after the last event.
+         *
+         * @default 15000
+         */
+        interval?: number;
+        /**
+         * The content of the ping comment. Must not include newline characters.
+         *
+         * @default ''
+         */
+        comment?: string;
+    };
+    /**
+     * If true, a `close` event is sent even when the iterator completes with `undefined`.
+     * When the iterator returns a value, a `close` event is always emitted regardless of this setting.
+     *
+     * @default true
+     */
+    emptyCloseEventEnabled?: boolean;
+}
+declare function toEventStream(iterator: AsyncIterator<unknown | void, unknown | void, void>, options?: ToEventStreamOptions): ReadableStream<Uint8Array<ArrayBuffer>>;
+
+interface ToStandardBodyOptions {
+    /**
+     * Hints on how the body should be parsed.
+     */
+    hint?: StandardBodyHint | undefined;
+}
+/**
+ * Convert a fetch request or response to a standard body.
+ */
+declare function toStandardBody(re: Request | Response, options?: ToStandardBodyOptions): Promise<StandardBody>;
+interface ToFetchBodyOptions {
+    /**
+     * Options for the event stream, like keep-alive settings, initial comment, etc.
+     */
+    eventStream?: ToEventStreamOptions;
+}
+/**
+ * Convert a standard body to a fetch body.
+ *
+ * Binary bodies (Blob, ReadableStream) can override the aut-set standard-server header,
+ * enabling pre-encoded body transmission while preserving client-side type interpretation.
+ */
+declare function toFetchBody(body: StandardBody, headers: StandardHeaders, options?: ToFetchBodyOptions): [
+    body: undefined | string | FormData | URLSearchParams | Blob | ReadableStream<Uint8Array<ArrayBuffer>>,
+    headers: StandardHeaders
+];
+
+/**
+ * Convert fetch headers to standard headers.
+ */
+declare function toStandardHeaders(headers: Headers): StandardHeaders;
+/**
+ * Convert standard headers to fetch headers.
+ */
+declare function toFetchHeaders(standardHeaders: StandardHeaders): Headers;
+
+/**
+ * Convert a fetch request to a standard request.
+ */
+declare function toStandardLazyRequest(request: Request): StandardLazyRequest;
+
+interface ToFetchResponseOptions extends ToFetchBodyOptions {
+}
+declare function toFetchResponse(standardResponse: StandardResponse, options?: ToFetchResponseOptions): Response;
+declare function toStandardLazyResponse(response: Response): StandardLazyResponse;
+
+declare function toStandardUrl(url: URL): StandardUrl;
+
+export { toAsyncIteratorObject, toEventStream, toFetchBody, toFetchHeaders, toFetchResponse, toStandardBody, toStandardHeaders, toStandardLazyRequest, toStandardLazyResponse, toStandardUrl };
+export type { ToEventStreamOptions, ToFetchBodyOptions, ToFetchResponseOptions, ToStandardBodyOptions };

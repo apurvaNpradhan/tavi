@@ -1,0 +1,26 @@
+import { Context, Router } from '@orpc/server';
+import { AwsLambdaHandler, AwsLambdaHandlerOptions } from '@orpc/server/aws-lambda';
+import { StandardHandlerOptions } from '@orpc/server/standard';
+import { OpenAPIHandlerCodecOptions } from '../standard/index.js';
+import '@orpc/client';
+import '@orpc/shared';
+import '@standard-server/core';
+import '@orpc/contract';
+import '../../shared/openapi.Dl3gew1x.js';
+
+interface OpenAPIHandlerOptions<T extends Context> extends AwsLambdaHandlerOptions<T>, StandardHandlerOptions<T>, OpenAPIHandlerCodecOptions<T> {
+}
+/**
+ * Serves oRPC procedures over the OpenAPI (RESTful) protocol on AWS Lambda.
+ *
+ * @remarks
+ * **Warning**: Requires the AWS Lambda Node.js runtime with response streaming enabled — handlers should be wrapped with `awslambda.streamifyResponse`.
+ *
+ * @see {@link https://orpc.dev/docs/adapters/aws-lambda | AWS Lambda Adapter}
+ */
+declare class OpenAPIHandler<T extends Context> extends AwsLambdaHandler<T> {
+    constructor(router: Router<T>, options?: NoInfer<OpenAPIHandlerOptions<T>>);
+}
+
+export { OpenAPIHandler };
+export type { OpenAPIHandlerOptions };

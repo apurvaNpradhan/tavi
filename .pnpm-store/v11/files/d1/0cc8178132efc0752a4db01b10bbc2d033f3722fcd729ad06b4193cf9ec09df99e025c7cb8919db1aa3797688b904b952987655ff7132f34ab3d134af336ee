@@ -1,0 +1,14 @@
+export { a as OpenAPIHandlerCodec, b as OpenAPIHandlerCodecCore, c as OpenAPIHandlerCodecCoreOptions, O as OpenAPIHandlerCodecOptions, d as OpenAPIMatcher, e as OpenAPIMatcherOptions } from '../../shared/openapi.fnBK1ELE.mjs';
+export { a as OpenAPILinkCodec, O as OpenAPILinkCodecOptions } from '../../shared/openapi.DE5kXinS.mjs';
+import { StandardHeaders } from '@standard-server/core';
+import { OpenAPISerializer } from '../../index.mjs';
+import '@orpc/client';
+import '@orpc/server';
+import '@orpc/server/standard';
+import '@orpc/shared';
+import '@orpc/contract';
+import '@orpc/client/standard';
+
+declare function serializeHeaders(headers: object, serializer: Pick<OpenAPISerializer, 'serialize'>): StandardHeaders;
+
+export { serializeHeaders };

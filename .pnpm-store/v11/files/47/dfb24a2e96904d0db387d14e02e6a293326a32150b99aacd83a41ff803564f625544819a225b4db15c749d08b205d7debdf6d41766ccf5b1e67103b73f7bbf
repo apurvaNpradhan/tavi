@@ -1,0 +1,4 @@
+"use client";
+"use client";
+import { A11yDevtoolsCore } from "./core.js";
+export { A11yDevtoolsCore };

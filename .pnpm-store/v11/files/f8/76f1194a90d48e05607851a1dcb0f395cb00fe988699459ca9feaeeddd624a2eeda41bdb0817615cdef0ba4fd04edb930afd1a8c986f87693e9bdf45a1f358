@@ -1,0 +1,12 @@
+declare const a11yDevtoolsPlugin: () => {
+    render: (_el: HTMLElement, props: import('@tanstack/devtools').TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}, a11yDevtoolsNoOpPlugin: () => {
+    render: (_el: HTMLElement, _props: import('@tanstack/devtools').TanStackDevtoolsPluginProps) => import("react/jsx-runtime").JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+};
+export { a11yDevtoolsPlugin, a11yDevtoolsNoOpPlugin };

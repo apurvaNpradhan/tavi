@@ -1,0 +1,12 @@
+export { O as OpenAPIHandlerCodec, a as OpenAPIHandlerCodecCore, b as OpenAPIMatcher, s as serializeHeaders } from '../../shared/openapi.wQKxWEI2.mjs';
+export { O as OpenAPILinkCodec } from '../../shared/openapi.BdClbrwk.mjs';
+import '@orpc/client';
+import '@orpc/server';
+import '@orpc/shared';
+import '@standard-server/core';
+import '../../shared/openapi.B1LWf28E.mjs';
+import '../../shared/openapi.B2G-HeFn.mjs';
+import '../../shared/openapi.B9PQzqBn.mjs';
+import 'rou3';
+import '@orpc/contract';
+import '@standard-server/fetch';

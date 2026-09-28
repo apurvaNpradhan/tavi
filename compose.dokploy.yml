@@ -1,0 +1,39 @@
+# Dokploy deployment: API + web without a bundled Postgres.
+#
+# Use this when Postgres is a separate, managed service (e.g. a Postgres app
+# on Dokploy). Point DATABASE_URL at that service's connection string; nothing
+# here runs or provisions a database. The root .env drives the interpolation:
+#   TAVI_PUBLIC_URL, AUTH_SECRET, DATABASE_URL, RESEND_*, SENTRY_DSN
+#
+# The web service serves the SPA and proxies /api to the API, exactly like the
+# bundled compose.yml — one public origin, first-party session cookies.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      # External PostgreSQL (Dokploy Postgres app, managed instance, ...).
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
+      # Public origin the browser uses. Setting the API URL to the same value
+      # makes session cookies first-party (SameSite=Lax) instead of Secure-only
+      # cross-site cookies, which a plain-HTTP setup cannot store.
+      TAVI_CLIENT_URL: ${TAVI_PUBLIC_URL:-http://localhost:8080}
+      TAVI_API_URL: ${TAVI_PUBLIC_URL:-http://localhost:8080}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped

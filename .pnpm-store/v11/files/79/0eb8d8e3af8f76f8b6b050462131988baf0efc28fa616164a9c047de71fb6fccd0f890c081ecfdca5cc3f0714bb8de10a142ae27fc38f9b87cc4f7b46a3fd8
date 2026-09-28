@@ -1,0 +1,6 @@
+import { TanStackDevtoolsTheme } from '@tanstack/devtools-ui';
+interface DevtoolsProps {
+    theme: TanStackDevtoolsTheme;
+}
+export default function Devtools(props: DevtoolsProps): import("solid-js").JSX.Element;
+export {};

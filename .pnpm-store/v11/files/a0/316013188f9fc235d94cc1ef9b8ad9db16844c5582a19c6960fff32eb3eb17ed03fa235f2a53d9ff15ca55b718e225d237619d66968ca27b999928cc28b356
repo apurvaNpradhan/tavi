@@ -1,0 +1,5 @@
+import { JSX } from 'solid-js';
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+export declare function __mountComponent(el: HTMLElement, props: TanStackDevtoolsPluginProps, importFn: () => Promise<{
+    default: (props: TanStackDevtoolsPluginProps) => JSX.Element;
+}>): () => void;

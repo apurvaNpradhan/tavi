@@ -1,0 +1,19 @@
+import { JSX } from 'preact';
+import { DevtoolsPanelProps } from './panel.js';
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+export declare function createPreactPlugin({ Component, ...config }: {
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+    Component: (props: DevtoolsPanelProps) => JSX.Element;
+}): readonly [() => {
+    render: (_el: HTMLElement, props: TanStackDevtoolsPluginProps) => JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}, () => {
+    render: (_el: HTMLElement, _props: TanStackDevtoolsPluginProps) => JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}];

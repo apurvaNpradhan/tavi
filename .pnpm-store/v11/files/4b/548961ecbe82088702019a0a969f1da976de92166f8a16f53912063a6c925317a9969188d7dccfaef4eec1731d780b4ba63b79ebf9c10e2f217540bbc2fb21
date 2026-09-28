@@ -1,0 +1,10 @@
+import { ClientContext } from '@orpc/client';
+import { AnySchema, ErrorMap } from '@orpc/contract';
+import { MaybeOptionalOptions } from '@orpc/shared';
+import { Context, ProcedureClientOptions, Procedure, ProcedureClient } from '../index.js';
+
+declare module '@orpc/server' {
+    interface DecoratedProcedure<TInitialContext extends Context, TInjectedContext extends Context, TInputSchema extends AnySchema, TOutputSchema extends AnySchema, TErrorMap extends ErrorMap> {
+        callable<TClientContext extends ClientContext>(...rest: MaybeOptionalOptions<ProcedureClientOptions<TInitialContext, TOutputSchema, TErrorMap, TClientContext>>): Procedure<TInitialContext, TInjectedContext, TInputSchema, TOutputSchema, TErrorMap> & ProcedureClient<TClientContext, TInputSchema, TOutputSchema, TErrorMap>;
+    }
+}

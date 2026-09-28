@@ -1,0 +1,66 @@
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+import * as solid_js from 'solid-js';
+import { JSX } from 'solid-js';
+
+/**
+ * Constructs the core class for the Devtools.
+ * This utility is used to construct a lazy loaded Solid component for the Devtools.
+ * It returns a tuple containing the main DevtoolsCore class and a NoOpDevtoolsCore class.
+ * The NoOpDevtoolsCore class is a no-op implementation that can be used for production if you want to explicitly exclude
+ * the Devtools from your application.
+ * @param importFn A function that returns a dynamic import of the Solid component
+ * @returns Tuple containing the DevtoolsCore class and a NoOpDevtoolsCore class
+ */
+declare function constructCoreClass(importFn: () => Promise<{
+    default: (props: TanStackDevtoolsPluginProps) => JSX.Element;
+}>): readonly [{
+    new (): {
+        "__#private@#isMounted": boolean;
+        "__#private@#isMounting": boolean;
+        "__#private@#abortMount": boolean;
+        "__#private@#dispose"?: () => void;
+        mount<T extends HTMLElement>(el: T, props: TanStackDevtoolsPluginProps): Promise<void>;
+        unmount(): void;
+    };
+}, {
+    new (): {
+        mount<T extends HTMLElement>(_el: T, _props: TanStackDevtoolsPluginProps): Promise<void>;
+        unmount(): void;
+        "__#private@#isMounted": boolean;
+        "__#private@#isMounting": boolean;
+        "__#private@#abortMount": boolean;
+        "__#private@#dispose"?: () => void;
+    };
+}];
+type ClassType = ReturnType<typeof constructCoreClass>[0];
+
+interface DevtoolsPanelProps extends TanStackDevtoolsPluginProps {
+}
+declare function createSolidPanel<TComponentProps extends DevtoolsPanelProps>(CoreClass: ClassType): readonly [(props: TComponentProps) => solid_js.JSX.Element, (_props: TComponentProps) => solid_js.JSX.Element];
+
+/** @jsxImportSource solid-js - we use Solid.js as JSX here */
+
+declare function createSolidPlugin({ Component, ...config }: {
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+    Component: (props: DevtoolsPanelProps) => JSX.Element;
+}): readonly [() => {
+    render: (_el: HTMLElement, props: TanStackDevtoolsPluginProps) => JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}, () => {
+    render: (_el: HTMLElement, _props: TanStackDevtoolsPluginProps) => JSX.Element;
+    name: string;
+    id?: string;
+    defaultOpen?: boolean;
+}];
+
+/** @jsxImportSource solid-js - we use Solid.js as JSX here */
+
+declare function __mountComponent(el: HTMLElement, props: TanStackDevtoolsPluginProps, importFn: () => Promise<{
+    default: (props: TanStackDevtoolsPluginProps) => JSX.Element;
+}>): () => void;
+
+export { type ClassType, type DevtoolsPanelProps, __mountComponent, constructCoreClass, createSolidPanel, createSolidPlugin };

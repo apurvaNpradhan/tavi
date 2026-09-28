@@ -1,0 +1,87 @@
+import { onMessagePortMessage, onMessagePortClose, postMessagePortMessage } from '@orpc/client/message-port';
+import { value, resolveMaybeOptionalOptions } from '@orpc/shared';
+import { ServerPeer, encodePeerMessage, decodePeerMessage, isClientPeerSendMessage, isPeerMessage } from '@standard-server/peer';
+import { createStandardPeerRequestHandler } from '../standard-peer/index.mjs';
+import { R as RPCHandlerCodec, S as StandardHandler } from '../../shared/server.C0lFtoHU.mjs';
+import '../../shared/server.W91HSRkE.mjs';
+import '@orpc/client';
+import '@standard-server/core';
+import '../../shared/server.Djb_ebJT.mjs';
+import '@orpc/contract';
+import '../../shared/server.BynNaBBA.mjs';
+
+class MessagePortHandler {
+  constructor(handler, options = {}) {
+    this.handler = handler;
+    this.transfer = options.experimental_transfer;
+    this.encodePeerMessageOptions = options.encodePeerMessage;
+    this.decodePeerMessageOptions = options.decodePeerMessage;
+  }
+  peers = /* @__PURE__ */ new WeakMap();
+  transfer;
+  encodePeerMessageOptions;
+  decodePeerMessageOptions;
+  /**
+   * Attaches message and close listeners to a message port.
+   *
+   * Prefer this over calling `.message()` and `.close()` manually.
+   */
+  upgrade(port, ...rest) {
+    onMessagePortMessage(port, (message) => this.message(port, message, ...rest));
+    onMessagePortClose(port, () => this.close(port));
+  }
+  /**
+   * Handles a single message received from a message port.
+   *
+   * @param port The message port instance. Use the same instance for all messages.
+   */
+  async message(port, data, ...rest) {
+    let peer = this.peers.get(port);
+    if (!peer) {
+      this.peers.set(port, peer = new ServerPeer(async (message) => {
+        const transfer = await value(this.transfer, message, port);
+        if (transfer) {
+          postMessagePortMessage(port, message, transfer);
+        } else {
+          postMessagePortMessage(port, await encodePeerMessage(message, this.encodePeerMessageOptions));
+        }
+      }));
+    }
+    let peerMessage;
+    if (typeof data === "string" || data instanceof Uint8Array) {
+      const result = decodePeerMessage(data, this.decodePeerMessageOptions);
+      if (result.matched && isClientPeerSendMessage(result.message)) {
+        peerMessage = result.message;
+      }
+    } else if (isPeerMessage(data) && isClientPeerSendMessage(data)) {
+      peerMessage = data;
+    }
+    if (peerMessage === void 0) {
+      return { matched: false };
+    }
+    await peer.message(peerMessage, createStandardPeerRequestHandler(this.handler, resolveMaybeOptionalOptions(rest)));
+    return { matched: true };
+  }
+  /**
+   * Cleans up peer state for a closed message port.
+   *
+   * @param port The same message port instance passed to `.message()`.
+   */
+  async close(port) {
+    const peer = this.peers.get(port);
+    if (peer) {
+      this.peers.delete(port);
+      await peer.close();
+    }
+  }
+}
+
+class RPCHandler extends MessagePortHandler {
+  constructor(router, options = {}) {
+    const codec = new RPCHandlerCodec(router, options);
+    const handler = new StandardHandler(codec, options);
+    super(handler, options);
+  }
+}
+
+export { MessagePortHandler, RPCHandler };

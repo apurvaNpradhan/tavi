@@ -1,0 +1,25 @@
+//#region src/angular/panel.ts
+function isPanelClassConstructor(o) {
+	return !!o.prototype;
+}
+function createAngularPanel(CoreClass) {
+	return [() => (inputs, host) => {
+		const panel = host.ownerDocument.createElement("div");
+		panel.style.height = "100%";
+		let unmount = null;
+		function mount(instance) {
+			instance.mount(panel, inputs());
+			unmount = () => instance.unmount();
+		}
+		host.appendChild(panel);
+		if (isPanelClassConstructor(CoreClass)) mount(new CoreClass(inputs()));
+		else CoreClass().then((ResolvedCoreClass) => new ResolvedCoreClass(inputs())).then(mount);
+		return () => {
+			unmount?.();
+		};
+	}, () => null];
+}
+//#endregion
+export { createAngularPanel };
+
+//# sourceMappingURL=panel.js.map

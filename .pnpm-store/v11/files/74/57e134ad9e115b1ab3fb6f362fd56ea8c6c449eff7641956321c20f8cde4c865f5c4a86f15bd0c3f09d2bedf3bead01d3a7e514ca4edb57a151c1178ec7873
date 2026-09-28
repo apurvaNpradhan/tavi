@@ -1,0 +1,132 @@
+import { StandardBody } from '@standard-server/core';
+import { Segment } from '@orpc/shared';
+
+type RPCJsonSerializationMeta = [type: string, ...path: Segment[]];
+type RPCJsonSerialization = {
+    json: unknown;
+    meta?: RPCJsonSerializationMeta[] | undefined;
+    maps?: undefined;
+    blobs?: undefined;
+} | {
+    json: unknown;
+    meta?: RPCJsonSerializationMeta[] | undefined;
+    maps: Segment[][];
+    blobs: Blob[];
+};
+interface RPCJsonSerializerHandler {
+    condition(value: unknown): boolean;
+    serialize(value: any): unknown;
+    /**
+     * `serialized` comes from the wire, so validate its type and throw on mismatch.
+     */
+    deserialize(serialized: unknown): unknown;
+    /**
+     * If false, the result of this serializer will not be further processed by other serializers,
+     * even if it matches their conditions and treat it as final serialized value.
+     * This can be useful for serializers that return primitive values, which should not be further processed.
+     * to improve performance and avoid potential issues with other serializers.
+     *
+     * @default false
+     */
+    isTerminal?: boolean;
+}
+interface RPCJsonSerializerOptions {
+    /**
+     * Extend or override the built-in type handlers used during serialization and deserialization.
+     *
+     * Each key is a unique type identifier (e.g. `"date"`, `"bigint"`) and maps to a handler
+     * that defines how to detect, serialize, and deserialize values of that type.
+     *
+     * **Extending:** Add new keys to support custom types:
+     * ```ts
+     * handlers: {
+     *   buffer: {
+     *     condition: (v) => v instanceof Buffer,
+     *     serialize: (v: Buffer) => v.toString('base64'),
+     *     deserialize: (s: string) => Buffer.from(s, 'base64'),
+     *     isTerminal: true,
+     *   }
+     * }
+     * ```
+     *
+     * **Overriding:** Use an existing key to replace a built-in handler:
+     * ```ts
+     * handlers: {
+     *   date: {
+     *     condition: (v) => v instanceof Date,
+     *     serialize: (v: Date) => v.getTime(),
+     *     deserialize: (n: number) => new Date(n),
+     *     isTerminal: true,
+     *   }
+     * }
+     * ```
+     *
+     * **Disabling:** Set a key to `undefined` to remove a built-in handler:
+     * ```ts
+     * handlers: { url: undefined }
+     * ```
+     *
+     * Built-in type keys: `undefined`, `bigint`, `date`, `nan`, `url`, `set`, `map`.
+     */
+    handlers?: Record<string, undefined | RPCJsonSerializerHandler> | undefined;
+    /**
+     * If true, properties with undefined values will be omitted during serialization.
+     *
+     * @default true
+     */
+    omitUndefinedProperties?: boolean | undefined;
+}
+/**
+ * Serializes and deserializes native types like Date, BigInt, Set, and Map
+ * into a JSON value plus separate metadata describing how to restore them.
+ *
+ * @see {@link https://orpc.dev/docs/rpc/serializer#rpc-json-serializer | RPC Serializer - RPC JSON Serializer}
+ */
+declare class RPCJsonSerializer {
+    private readonly handlers;
+    private readonly inlineBuiltInHandlers;
+    private readonly handlerEntries;
+    private readonly omitUndefinedProperties;
+    constructor(options?: RPCJsonSerializerOptions);
+    serialize(data: unknown): RPCJsonSerialization;
+    /**
+     * `segments` is a shared mutable stack (push/pop while walking),
+     * so it must be copied before being stored in `meta` or `maps`.
+     */
+    private serializeValue;
+    deserialize(serialized: RPCJsonSerialization): unknown;
+}
+
+interface RPCSerializerSerializeOptions {
+    /**
+     * Use FormData for serialization when nested blobs are present.
+     * Does not apply to root-level Blob values.
+     *
+     * @default true
+     */
+    useFormDataForBlobFields?: boolean;
+}
+interface RPCSerializerOptions extends RPCJsonSerializerOptions {
+    /**
+     * Default options for serialize method
+     */
+    serialize?: RPCSerializerSerializeOptions | undefined;
+}
+/**
+ * Serializes and deserializes data for the RPC protocol,
+ * preserving native types like Date, BigInt, Set, and Map that plain JSON cannot represent.
+ *
+ * @see {@link https://orpc.dev/docs/rpc/serializer | RPC Serializer}
+ */
+declare class RPCSerializer {
+    private readonly jsonSerializer;
+    private readonly defaultSerializeOptions;
+    constructor(options?: RPCSerializerOptions);
+    serialize(data: unknown, options?: RPCSerializerSerializeOptions): StandardBody;
+    private serializeValue;
+    deserialize(data: StandardBody): unknown;
+    private deserializeValue;
+}
+
+export { RPCJsonSerializer as b, RPCSerializer as e };
+export type { RPCJsonSerialization as R, RPCJsonSerializationMeta as a, RPCJsonSerializerHandler as c, RPCJsonSerializerOptions as d, RPCSerializerOptions as f, RPCSerializerSerializeOptions as g };

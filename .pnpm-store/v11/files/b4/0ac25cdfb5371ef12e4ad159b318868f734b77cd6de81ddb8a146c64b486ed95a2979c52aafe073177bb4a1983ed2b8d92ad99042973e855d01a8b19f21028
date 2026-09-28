@@ -1,0 +1,1 @@
+import { Head, HeadProps } from "./head.mjs";

@@ -1,0 +1,56 @@
+import { toAbortSignal, toStandardBody, toStandardMethod, toStandardUrl, toNodeHttpBody, canWriteToNodeResponse, getNodeResponseError } from '@standard-server/node';
+
+function toStandardLazyRequest(req, reply) {
+  const signal = toAbortSignal(reply.raw);
+  return {
+    url: toStandardUrl({ url: req.url }),
+    method: toStandardMethod(req.raw.method),
+    headers: req.headers,
+    resolveBody: async (hint) => {
+      if (req.body !== void 0) {
+        return req.body;
+      }
+      return toStandardBody(req.raw, { hint });
+    },
+    signal
+  };
+}
+
+async function sendStandardResponse(reply, standardResponse, options = {}) {
+  const [resBody, resHeaders] = toNodeHttpBody(standardResponse.body, standardResponse.headers, options);
+  return new Promise((resolve, reject) => {
+    if (!canWriteToNodeResponse(reply.raw)) {
+      const error = getNodeResponseError(reply.raw);
+      if (typeof resBody === "object" && !resBody.closed) {
+        resBody.on("error", reject);
+        resBody.destroy(error ?? void 0);
+      }
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+      return;
+    }
+    reply.raw.once("error", reject);
+    reply.raw.once("close", resolve);
+    try {
+      reply.status(standardResponse.status);
+      for (const key of Object.keys(resHeaders)) {
+        const value = resHeaders[key];
+        if (value !== void 0) {
+          reply.header(key, value);
+        }
+      }
+      reply.send(resBody);
+    } catch (error) {
+      if (typeof resBody === "object" && !resBody.closed) {
+        resBody.on("error", reject);
+        resBody.destroy(error);
+      }
+      reject(error);
+    }
+  });
+}
+
+export { sendStandardResponse, toStandardLazyRequest };

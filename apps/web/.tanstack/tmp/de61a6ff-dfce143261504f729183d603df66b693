@@ -1,0 +1,9 @@
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/device/approve')({
+  component: RouteComponent,
+})
+
+function RouteComponent() {
+  return <div>Hello "/device/approve"!</div>
+}

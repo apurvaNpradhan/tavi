@@ -1,0 +1,19 @@
+/** @jsxImportSource solid-js */
+export interface A11yDevtoolsInit {
+}
+declare const A11yDevtoolsCore: new () => {
+    "__#private@#isMounted": boolean;
+    "__#private@#isMounting": boolean;
+    "__#private@#abortMount": boolean;
+    "__#private@#dispose"?: () => void;
+    mount<T extends HTMLElement>(el: T, props: import('@tanstack/devtools').TanStackDevtoolsPluginProps): Promise<void>;
+    unmount(): void;
+}, A11yDevtoolsCoreNoOp: new () => {
+    mount<T extends HTMLElement>(_el: T, _props: import('@tanstack/devtools').TanStackDevtoolsPluginProps): Promise<void>;
+    unmount(): void;
+    "__#private@#isMounted": boolean;
+    "__#private@#isMounting": boolean;
+    "__#private@#abortMount": boolean;
+    "__#private@#dispose"?: () => void;
+};
+export { A11yDevtoolsCore, A11yDevtoolsCoreNoOp };

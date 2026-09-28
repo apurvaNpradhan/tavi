@@ -1,0 +1,225 @@
+import { Buffer } from 'node:buffer';
+import { resolveStandardBodyHint, flattenStandardHeader, getFilenameFromContentDisposition } from '@standard-server/core';
+import { toAsyncIteratorObject } from '@standard-server/fetch';
+import { toArray, parseEmptyableJSON, safeEncodeURIComponent } from '@standard-server/shared';
+import { toAbortSignal, toNodeHttpBody, canWriteToNodeResponse, getNodeResponseError } from '@standard-server/node';
+
+function toStandardHeaders(event) {
+  const standardHeaders = /* @__PURE__ */ Object.create(null);
+  const append = (key, values) => {
+    const lowerKey = key.toLowerCase();
+    const existing = standardHeaders[lowerKey];
+    const merged = existing === void 0 ? values : [...toArray(existing), ...values];
+    standardHeaders[lowerKey] = merged.length === 1 ? merged[0] : merged;
+  };
+  if (!("httpMethod" in event)) {
+    if (event.headers) {
+      for (const key of Object.keys(event.headers)) {
+        const value = event.headers[key];
+        if (value !== void 0) {
+          append(key, [value]);
+        }
+      }
+    }
+    if (event.cookies?.length && standardHeaders.cookie === void 0) {
+      append("cookie", [event.cookies.join("; ")]);
+    }
+    return standardHeaders;
+  }
+  if (event.multiValueHeaders) {
+    for (const key of Object.keys(event.multiValueHeaders)) {
+      const values = event.multiValueHeaders[key];
+      if (values !== void 0 && values.length !== 0) {
+        append(key, values);
+      }
+    }
+  }
+  if (event.headers) {
+    for (const key of Object.keys(event.headers)) {
+      const value = event.headers[key];
+      if (value !== void 0 && standardHeaders[key.toLowerCase()] === void 0) {
+        append(key, [value]);
+      }
+    }
+  }
+  return standardHeaders;
+}
+function getEventHeader(event, key) {
+  key = key.toLowerCase();
+  if ("httpMethod" in event && event.multiValueHeaders) {
+    for (const k of Object.keys(event.multiValueHeaders)) {
+      const headerValues = event.multiValueHeaders[k];
+      if (headerValues !== void 0 && headerValues.length !== 0 && k.toLowerCase() === key) {
+        return headerValues;
+      }
+    }
+  }
+  if (event.headers) {
+    for (const k of Object.keys(event.headers)) {
+      const headerValue = event.headers[k];
+      if (headerValue !== void 0 && k.toLowerCase() === key) {
+        return headerValue;
+      }
+    }
+  }
+  if (key === "cookie" && !("httpMethod" in event) && event.cookies?.length) {
+    return event.cookies.join("; ");
+  }
+  return void 0;
+}
+function toLambdaHeaders(standardHeaders) {
+  const headers = /* @__PURE__ */ Object.create(null);
+  const setCookies = [];
+  for (const key of Object.keys(standardHeaders)) {
+    const value = standardHeaders[key];
+    if (value === void 0) {
+      continue;
+    }
+    if (key.toLowerCase() === "set-cookie") {
+      setCookies.push(...toArray(value));
+    } else {
+      headers[key] = Array.isArray(value) ? value.join(", ") : value;
+    }
+  }
+  return [headers, setCookies];
+}
+
+async function toStandardBody(event, options = {}) {
+  const hint = options?.hint ?? resolveStandardBodyHint({
+    "standard-server": getEventHeader(event, "standard-server"),
+    "content-type": getEventHeader(event, "content-type"),
+    "content-length": getEventHeader(event, "content-length"),
+    "content-disposition": getEventHeader(event, "content-disposition")
+  });
+  if (hint === "none") {
+    return void 0;
+  }
+  const bytes = typeof event.body !== "string" ? new Uint8Array() : event.isBase64Encoded ? new Uint8Array(Buffer.from(event.body, "base64")) : new TextEncoder().encode(event.body);
+  if (hint === "json") {
+    return parseEmptyableJSON(new TextDecoder().decode(bytes));
+  }
+  const contentType = flattenStandardHeader(getEventHeader(event, "content-type"));
+  if (hint === "form-data") {
+    return _bytesToFormData(bytes, contentType);
+  }
+  if (hint === "url-search-params") {
+    return new URLSearchParams(new TextDecoder().decode(bytes));
+  }
+  if (hint === "event-stream") {
+    return toAsyncIteratorObject(_bytesToReadableStream(bytes));
+  }
+  if (hint === "file") {
+    const contentDisposition = flattenStandardHeader(getEventHeader(event, "content-disposition"));
+    const fileName = contentDisposition !== void 0 ? getFilenameFromContentDisposition(contentDisposition) : void 0;
+    return new File([bytes], fileName ?? "blob", { type: contentType ?? "" });
+  }
+  return _bytesToReadableStream(bytes);
+}
+function _bytesToFormData(bytes, contentType) {
+  const response = new Response(bytes, {
+    headers: {
+      "content-type": contentType ?? ""
+    }
+  });
+  return response.formData();
+}
+function _bytesToReadableStream(bytes) {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    }
+  });
+}
+
+const UNENCODED_PATH_CHAR_RE = /[\0-\x20"#<>?^`{}\x7F-\u{10FFFF}]/gu;
+function toStandardUrl(event) {
+  if (!("httpMethod" in event)) {
+    const pathname2 = toPathname(event.rawPath);
+    return event.rawQueryString ? `${pathname2}?${event.rawQueryString}` : pathname2;
+  }
+  const pathname = toPathname(event.path);
+  const query = new URLSearchParams();
+  if (event.multiValueQueryStringParameters) {
+    for (const key of Object.keys(event.multiValueQueryStringParameters)) {
+      const values = event.multiValueQueryStringParameters[key];
+      for (const value of values ?? []) {
+        query.append(key, value);
+      }
+    }
+  }
+  if (event.queryStringParameters) {
+    for (const key of Object.keys(event.queryStringParameters)) {
+      const value = event.queryStringParameters[key];
+      if (value !== void 0 && !query.has(key)) {
+        query.append(key, value);
+      }
+    }
+  }
+  const search = query.toString();
+  return search === "" ? pathname : `${pathname}?${search}`;
+}
+function toPathname(path) {
+  const encoded = path.replace(UNENCODED_PATH_CHAR_RE, safeEncodeURIComponent);
+  return encoded.startsWith("/") ? encoded : `/${encoded}`;
+}
+
+function toStandardLazyRequest(event, responseStream) {
+  const signal = toAbortSignal(responseStream);
+  return {
+    url: toStandardUrl(event),
+    method: "httpMethod" in event ? event.httpMethod : event.requestContext.http.method,
+    get headers() {
+      const headers = toStandardHeaders(event);
+      Object.defineProperty(this, "headers", { value: headers, writable: true });
+      return headers;
+    },
+    set headers(value) {
+      Object.defineProperty(this, "headers", { value, writable: true });
+    },
+    resolveBody: (hint) => toStandardBody(event, { hint }),
+    signal
+  };
+}
+
+async function sendStandardResponse(responseStream, standardResponse, options = {}) {
+  const [resBody, resHeaders] = toNodeHttpBody(standardResponse.body, standardResponse.headers, options);
+  return new Promise((resolve, reject) => {
+    if (!canWriteToNodeResponse(responseStream)) {
+      const error = getNodeResponseError(responseStream);
+      if (typeof resBody === "object" && !resBody.closed) {
+        resBody.on("error", reject);
+        resBody.destroy(error ?? void 0);
+      }
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+      return;
+    }
+    const [headers, setCookies] = toLambdaHeaders(resHeaders);
+    const res = awslambda.HttpResponseStream.from(responseStream, {
+      statusCode: standardResponse.status,
+      headers,
+      cookies: setCookies
+    });
+    res.once("error", reject);
+    res.once("close", resolve);
+    if (resBody === void 0) {
+      res.end();
+    } else if (typeof resBody === "string") {
+      res.end(resBody);
+    } else {
+      res.once("close", () => {
+        if (!resBody.closed) {
+          resBody.destroy(getNodeResponseError(res) ?? void 0);
+        }
+      });
+      resBody.once("error", (error) => res.destroy(error));
+      resBody.pipe(res);
+    }
+  });
+}
+
+export { getEventHeader, sendStandardResponse, toLambdaHeaders, toStandardBody, toStandardHeaders, toStandardLazyRequest, toStandardUrl };

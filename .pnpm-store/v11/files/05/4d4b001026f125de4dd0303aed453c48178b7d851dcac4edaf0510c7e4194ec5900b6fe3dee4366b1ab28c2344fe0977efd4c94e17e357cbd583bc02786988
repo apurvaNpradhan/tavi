@@ -1,0 +1,12 @@
+"use client";
+"use client";
+import { A11yDevtoolsPanel as A11yDevtoolsPanel$1, A11yDevtoolsPanelNoOp } from "./A11yDevtools.js";
+import { a11yDevtoolsNoOpPlugin, a11yDevtoolsPlugin as a11yDevtoolsPlugin$1 } from "./plugin.js";
+import { isDevMode } from "@angular/core";
+//#region src/angular/index.ts
+var A11yDevtoolsPanel = !isDevMode() ? A11yDevtoolsPanelNoOp : A11yDevtoolsPanel$1;
+var a11yDevtoolsPlugin = !isDevMode() ? a11yDevtoolsNoOpPlugin : a11yDevtoolsPlugin$1;
+//#endregion
+export { A11yDevtoolsPanel, a11yDevtoolsPlugin };
+
+//# sourceMappingURL=index.js.map

@@ -1,0 +1,19 @@
+import { A11yAuditOptions, A11yAuditResult, A11yIssue, SeverityThreshold } from '../types/types.js';
+/**
+ * Check if an impact level meets or exceeds the threshold
+ */
+export declare function meetsThreshold(impact: SeverityThreshold | null | undefined, threshold: SeverityThreshold): boolean;
+/**
+ * Run an accessibility audit using axe-core
+ */
+export declare function runAudit(options?: A11yAuditOptions): Promise<A11yAuditResult>;
+/**
+ * Get a list of all available axe-core rules plus custom rules
+ */
+export declare function getAvailableRules(): Array<{
+    id: string;
+    description: string;
+    tags: Array<string>;
+}>;
+export declare const IMPACTS: readonly ["critical", "serious", "moderate", "minor"];
+export declare const filterIssuesAboveThreshold: (issues: A11yAuditResult["issues"], threshold: SeverityThreshold) => A11yIssue[];

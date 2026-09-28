@@ -1,0 +1,14 @@
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+import { DefineComponent } from 'vue';
+export interface DevtoolsPanelProps extends TanStackDevtoolsPluginProps {
+}
+export declare function createVuePanel<TComponentProps extends DevtoolsPanelProps, TCoreDevtoolsClass extends {
+    mount: (el: HTMLElement, props?: TanStackDevtoolsPluginProps) => void;
+    unmount: () => void;
+}>(CoreClass: new (props: TComponentProps) => TCoreDevtoolsClass): [DefineComponent<{
+    theme?: DevtoolsPanelProps["theme"];
+    devtoolsProps: TComponentProps;
+}>, DefineComponent<{
+    theme?: DevtoolsPanelProps["theme"];
+    devtoolsProps: TComponentProps;
+}>];

@@ -1,0 +1,8 @@
+import { Component } from 'svelte';
+import { TanStackDevtoolsPluginProps } from '@tanstack/devtools';
+export interface DevtoolsPanelProps extends TanStackDevtoolsPluginProps {
+}
+export declare function createSveltePanel<TComponentProps extends DevtoolsPanelProps, TCoreDevtoolsClass extends {
+    mount: (el: HTMLElement, props: TComponentProps) => void;
+    unmount: () => void;
+}>(CoreClass: new () => TCoreDevtoolsClass): [Component<TComponentProps>, Component<TComponentProps>];

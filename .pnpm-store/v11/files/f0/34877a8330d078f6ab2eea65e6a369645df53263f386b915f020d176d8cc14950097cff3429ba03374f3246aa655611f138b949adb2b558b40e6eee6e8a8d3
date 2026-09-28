@@ -1,0 +1,80 @@
+import { ClientContext, ClientOptions } from '../../index.mjs';
+import { Value, Promisable } from '@orpc/shared';
+import { StandardRequest, StandardLazyResponse } from '@standard-server/core';
+import { ClientPeer, EncodePeerMessageOptions, DecodePeerMessageOptions } from '@standard-server/peer';
+import { StandardLinkTransport, StandardLink, StandardLinkOptions } from '../standard/index.mjs';
+import { RPCLinkCodecOptions } from '../standard/index.mjs';
+import '../../shared/client.n8K9dFhY.mjs';
+
+/**
+ * The message port used by electron in main process
+ */
+interface MessagePortMainLike {
+    on: <T extends string>(event: T, callback: (event?: {
+        data: any;
+    }) => void) => void;
+    postMessage: (data: any, transfer?: any[]) => void;
+}
+/**
+ * The message port used by browser extension
+ */
+interface BrowserPortLike {
+    onMessage: {
+        addListener: (callback: (data: any) => void) => void;
+    };
+    onDisconnect: {
+        addListener: (callback: () => void) => void;
+    };
+    postMessage: (data: any) => void;
+}
+type SupportedMessagePort = Pick<MessagePort, 'addEventListener' | 'postMessage'> | MessagePortMainLike | BrowserPortLike;
+/**
+ * Message port can support [The structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)
+ */
+type SupportedMessagePortData = any;
+declare function postMessagePortMessage(port: SupportedMessagePort, data: SupportedMessagePortData, transfer?: any[]): void;
+declare function onMessagePortMessage(port: SupportedMessagePort, callback: (data: SupportedMessagePortData) => void): void;
+declare function onMessagePortClose(port: SupportedMessagePort, callback: () => void): void;
+
+type DecodedRequestMessage = ConstructorParameters<typeof ClientPeer>[0] extends (message: infer TMessage) => unknown ? TMessage : never;
+interface MessagePortLinkTransportOptions<_T extends ClientContext> {
+    port: SupportedMessagePort;
+    /**
+     * By default, oRPC serializes request/response messages to string/binary data before sending over message port.
+     * If needed, define this option to utilize full power of [MessagePort: postMessage() method](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort/postMessage),
+     * such as transferring ownership of objects to the other side or support unserializable objects like `OffscreenCanvas`.
+     *
+     * @remarks
+     * **Note**: Returning `null` or `undefined` disables this feature.
+     * **Warning**: Make sure your message port supports `transfer` before using this feature.
+     */
+    experimental_transfer?: Value<Promisable<object[] | null | undefined>, [message: DecodedRequestMessage, port: SupportedMessagePort]>;
+    /**
+     * Options for encoding peer messages. such as `prefix` for distinguishing messages on the same channel..
+     */
+    encodePeerMessage?: EncodePeerMessageOptions | undefined;
+    /**
+     * Options for decoding peer messages, such as `prefix` for distinguishing messages on the same channel.
+     */
+    decodePeerMessage?: DecodePeerMessageOptions | undefined;
+}
+declare class MessagePortLinkTransport<T extends ClientContext> implements StandardLinkTransport<T> {
+    private readonly peer;
+    constructor({ port, experimental_transfer, encodePeerMessage: encodePeerMessageOptions, decodePeerMessage: decodePeerMessageOptions }: MessagePortLinkTransportOptions<T>);
+    send(standardRequest: StandardRequest, _path: string[], _options: ClientOptions<T>): Promise<StandardLazyResponse>;
+}
+
+interface RPCLinkOptions<T extends ClientContext> extends StandardLinkOptions<T>, MessagePortLinkTransportOptions<T>, RPCLinkCodecOptions<T> {
+}
+/**
+ * Client link that communicates with an RPC Handler over a Message Port
+ * (e.g. workers, iframes, browser extensions, Electron).
+ *
+ * @see {@link https://orpc.dev/docs/adapters/message-port | Message Port Adapter}
+ */
+declare class RPCLink<T extends ClientContext> extends StandardLink<T> {
+    constructor(options: RPCLinkOptions<T>);
+}
+
+export { MessagePortLinkTransport, RPCLink, onMessagePortClose, onMessagePortMessage, postMessagePortMessage };
+export type { BrowserPortLike, MessagePortLinkTransportOptions, MessagePortMainLike, RPCLinkOptions, SupportedMessagePort, SupportedMessagePortData };
