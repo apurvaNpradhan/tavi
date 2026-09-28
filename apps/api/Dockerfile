@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- build -------------------------------------------------------------------
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 
 RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
 WORKDIR /app
@@ -42,7 +42,7 @@ RUN pnpm --filter @tavi/env build \
  && pnpm --filter @tavi/api build
 
 # --- production dependencies -------------------------------------------------
-FROM node:22-alpine AS prod-deps
+FROM node:26-alpine AS prod-deps
 
 RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
 WORKDIR /app
@@ -64,7 +64,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
       --network-concurrency=4 --fetch-timeout=300000
 
 # --- runtime -----------------------------------------------------------------
-FROM node:22-alpine AS runtime
+FROM node:26-alpine AS runtime
 
 RUN addgroup -g 1001 appuser \
  && adduser -u 1001 -G appuser -D appuser \
