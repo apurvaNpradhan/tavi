@@ -39,7 +39,7 @@ RUN pnpm --filter @tavi/permissions build \
  && pnpm --filter @tavi/web build
 
 # --- runtime -----------------------------------------------------------------
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.29-alpine AS runtime
 
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
