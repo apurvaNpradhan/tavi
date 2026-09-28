@@ -45,7 +45,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # semantic-release reads the full history to find the last tag.
           fetch-depth: 0
@@ -108,7 +108,7 @@ jobs:
     steps:
       # The same token the plan job used, so the release commit and tag are not
       # pushed under a different identity than the one that was verified.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
