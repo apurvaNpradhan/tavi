@@ -43,7 +43,7 @@
     "@oslojs/encoding": "^1.1.0",
     "@paralleldrive/cuid2": "^3.3.0",
     "@scalar/hono-api-reference": "^0.12.4",
-    "@sentry/node": "^10.70.0",
+    "@sentry/node": "^11.0.0",
     "@sentry/profiling-node": "^10.70.0",
     "better-auth": "~1.6.33",
     "drizzle-orm": "^0.45.2",
