@@ -18,7 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "better-auth": "~1.6.33"
+    "better-auth": "~1.7.7"
   },
   "devDependencies": {
     "@tavi/typescript-config": "workspace:*",
